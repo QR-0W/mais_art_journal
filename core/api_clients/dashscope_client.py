@@ -269,7 +269,8 @@ class DashScopeClient(BaseApiClient):
                 })
                 opener = urllib.request.build_opener(proxy_handler)
             else:
-                opener = urllib.request.build_opener()
+                # 显式禁用环境变量代理（HTTP_PROXY/HTTPS_PROXY），确保 proxy.enabled=false 时直连
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
             timeout = int((proxy_config or {}).get("timeout", 600))
 

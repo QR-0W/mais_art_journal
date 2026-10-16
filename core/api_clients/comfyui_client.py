@@ -53,7 +53,8 @@ class ComfyUIClient(BaseApiClient):
             opener = urllib.request.build_opener(proxy_handler)
             timeout = proxy_config.get('timeout', 120)
         else:
-            opener = urllib.request.build_opener()
+            # 显式禁用环境变量代理（HTTP_PROXY/HTTPS_PROXY），确保 proxy.enabled=false 时直连
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             timeout = 120
         return opener, timeout
 
