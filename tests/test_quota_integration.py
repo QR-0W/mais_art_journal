@@ -383,7 +383,7 @@ def test_unload_drains_active_tool_and_finishes_accounting_before_close(tmp_path
 def test_sdk_metadata_survives_operation_tracking() -> None:
     plugin = MaisArtPlugin()
     components = {item["name"]: item for item in plugin.get_components()}
-    assert components["generate_image"]["metadata"]["timeout_ms"] == 180000
+    assert components["generate_image"]["metadata"]["timeout_ms"] == 660000
     assert components["draw_picture"]["metadata"]["timeout_ms"] == 660000
     assert components["dr"]["metadata"]["timeout_ms"] == 240000
 

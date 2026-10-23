@@ -2,7 +2,9 @@
 
 from collections import deque
 from io import BytesIO
+from pathlib import Path
 from PIL import Image
+from pydantic import ValidationError
 from types import SimpleNamespace
 from typing import Any, Deque, Dict, Iterator, List, Optional, Tuple
 
@@ -12,18 +14,22 @@ import json
 import pytest
 import re
 import requests
+import tomllib
 import zipfile
 
 from mais_art_journal.core.api_clients import get_client_class
 from mais_art_journal.core.api_clients import novelai_client as nai
 from mais_art_journal.core.api_clients.base_client import NonRetryableError
 from mais_art_journal.core.api_clients.client_context import ClientContext, ProxyConfig
-from mais_art_journal.core.config.novelai import NovelAIConfig
+from mais_art_journal.core.config.migration import normalize_config_for_upgrade, upgrade_config_file
+from mais_art_journal.core.config.models import MaisArtConfig, ModelConfig
+from mais_art_journal.core.config.novelai import NOVELAI_FIELD_NAMES, NovelAIConfig
 from mais_art_journal.core.pipeline.request import GenerationRequest
 from mais_art_journal.core.pipeline.steps.build_selfie_prompt import BuildSelfiePrompt
 from mais_art_journal.core.pipeline.steps.merge_negative_prompt import MergeNegativePrompt
 from mais_art_journal.core.prompts import selfie_prompt_builder
 from mais_art_journal.core.prompts.novelai_prompt import convert_novelai_weights
+from mais_art_journal.plugin import MaisArtPlugin
 
 
 def image_bytes(size: Tuple[int, int] = (64, 64), image_format: str = "PNG") -> bytes:
@@ -166,6 +172,284 @@ def test_bearer_prefix_is_applied_once(client: nai.NovelAIClient, transport: Tra
     assert transport.calls[0]["headers"]["Authorization"] == "Bearer offline-secret"
 
 
+def test_nai_options_are_editable_primitive_fields_in_actual_webui_schema() -> None:
+    plugin = MaisArtPlugin()
+    schema = plugin.get_webui_config_schema()
+    fields = schema["sections"]["models"]["fields"]["items"]["item_fields"]
+    assert "novelai" not in fields
+    defaults = NovelAIConfig().model_dump()
+    for name, field in NOVELAI_FIELD_NAMES.items():
+        assert fields[field]["type"] in {"select", "boolean", "number", "integer"}
+        assert fields[field]["default"] == defaults[name]
+    assert fields["novelai_api_mode"]["choices"] == ["official", "json"]
+    assert fields["novelai_mode"]["choices"] == ["anime", "furry", "background"]
+
+
+def test_flat_nai_options_survive_plugin_save_and_reach_transport(transport: Transport) -> None:
+    plugin = MaisArtPlugin()
+    data = plugin.get_default_config()
+    data["basic"]["generation_timeout_seconds"] = 420
+    data["models"]["items"] = [{
+        **config(), "id": "nai-json", "novelai_api_mode": "json",
+        "novelai_mode": "background", "novelai_quality_tags": False,
+        "novelai_img2img_strength": 0.8, "novelai_img2img_noise": 0.2,
+        "novelai_request_timeout_seconds": 310,
+    }]
+    plugin.set_plugin_config(data)
+    saved = plugin.get_plugin_config_data()
+    plugin.set_plugin_config(saved)
+    assert plugin.get_plugin_config_data() == saved
+    settings = plugin.config.models.items[0].model_dump()
+    source = base64.b64encode(image_bytes()).decode("ascii")
+    transport.results.append(json_response(transport.output_image))
+    assert generate(nai.NovelAIClient(ClientContext()), settings, input_image_base64=source)[0]
+    request = transport.calls[0]
+    assert request["timeout"] == (10, 310)
+    assert request["json"]["input"].startswith("background dataset,")
+    assert request["json"]["parameters"]["strength"] == 0.8
+    assert request["json"]["parameters"]["noise"] == 0.2
+    assert "novelai" not in settings
+
+
+def test_nested_nai_config_upgrades_on_disk_without_losing_values(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    original = b'''[plugin]
+config_version = "4.6.2"
+[[models.items]]
+id = "nai-old"
+format = "novelai"
+model = "nai-diffusion-3"
+api_key = "offline-secret"
+[models.items.novelai]
+mode = "anime"
+quality_tags = false
+smea = true
+smea_dynamic = true
+img2img_strength = 0.85
+img2img_noise = 0.25
+request_timeout_seconds = 45
+'''
+    path.write_bytes(original)
+    assert upgrade_config_file(path)
+    migrated = tomllib.loads(path.read_text(encoding="utf-8"))
+    item = MaisArtConfig.model_validate(migrated).models.items[0]
+    assert "novelai" not in migrated["models"]["items"][0]
+    assert item.api_key == "offline-secret" and item.novelai_mode == "anime"
+    assert not item.novelai_quality_tags and item.novelai_smea and item.novelai_smea_dynamic
+    assert item.novelai_img2img_strength == 0.85 and item.novelai_img2img_noise == 0.25
+    assert item.novelai_request_timeout_seconds == 45
+    backup, = (tmp_path / "old").glob("*.toml")
+    assert backup.read_bytes() == original
+    assert upgrade_config_file(path) is False
+
+
+def test_explicit_flat_nai_settings_override_old_nested_values() -> None:
+    data = MaisArtConfig().model_dump()
+    data["models"]["items"] = [{
+        "id": "nai", "novelai_quality_tags": False,
+        "novelai": {"quality_tags": True, "img2img_noise": 0.4},
+    }]
+    migrated, _ = normalize_config_for_upgrade(data)
+    assert migrated["models"]["items"][0]["novelai_quality_tags"] is False
+    assert migrated["models"]["items"][0]["novelai_img2img_noise"] == 0.4
+
+
+@pytest.mark.parametrize("changes", [
+    {"novelai_api_mode": "unknown"}, {"novelai_img2img_noise": 1.1},
+    {"novelai_request_timeout_seconds": 311},
+])
+def test_flat_nai_settings_are_validated(changes: Dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        ModelConfig(**changes)
+
+
+def json_response(content: bytes, image_format: str = "png") -> Response:
+    return Response(json.dumps({
+        "images": [base64.b64encode(content).decode("ascii")],
+        "image_format": image_format, "job": {"status": "succeeded", "cost_gems": 0},
+    }).encode(), content_type="application/json")
+
+
+@pytest.mark.parametrize("job", [
+    None, {}, {"job_id": "offline-job"}, {"status": None},
+    {"status": "succeeded"}, {"status": "completed"}, {"status": "success"},
+    {"status": "done"}, {"status": " COMPLETED "}, {"status": "provider_terminal_state"},
+])
+def test_valid_json_image_does_not_require_example_job_status(
+    client: nai.NovelAIClient, transport: Transport, job: Any,
+) -> None:
+    body = json.loads(json_response(transport.output_image).body)
+    if job is None:
+        body.pop("job")
+    else:
+        body["job"] = job
+    transport.results.append(Response(json.dumps(body).encode(), content_type="application/json"))
+    ok, result = generate(client, config(novelai_api_mode="json"))
+    assert ok and base64.b64decode(result, validate=True) == transport.output_image
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.parametrize("status", [
+    "failed", "error", "cancelled", "canceled", "timeout", "timed_out",
+    "queued", "pending", "running", "processing", "generating", "submitted", " FAILED ",
+])
+def test_failed_or_unfinished_json_job_is_rejected_even_with_image(
+    client: nai.NovelAIClient, transport: Transport, status: str,
+) -> None:
+    body = json.loads(json_response(transport.output_image).body)
+    body["job"]["status"] = status
+    transport.results.append(Response(json.dumps(body).encode(), content_type="application/json"))
+    ok, error = generate(client, config(novelai_api_mode="json"))
+    assert not ok and f"status={status}" in error
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.parametrize("job", [[], "completed", {"status": []}, {"status": 1}])
+def test_malformed_job_metadata_is_rejected_without_retry(
+    client: nai.NovelAIClient, transport: Transport, job: Any,
+) -> None:
+    body = json.loads(json_response(transport.output_image).body)
+    body["job"] = job
+    transport.results.append(Response(json.dumps(body).encode(), content_type="application/json"))
+    ok, error = generate(client, config(novelai_api_mode="json"))
+    assert not ok and "job" in error and len(transport.calls) == 1
+
+
+def test_non_example_job_status_does_not_bypass_image_validation(
+    client: nai.NovelAIClient, transport: Transport,
+) -> None:
+    body = json.loads(json_response(b"not an image").body)
+    body["job"]["status"] = "completed"
+    transport.results.append(Response(json.dumps(body).encode(), content_type="application/json"))
+    ok, error = generate(client, config(novelai_api_mode="json"))
+    assert not ok and "内容无效" in error and len(transport.calls) == 1
+
+
+def test_job_status_diagnostic_does_not_log_token_or_image(
+    client: nai.NovelAIClient, transport: Transport, caplog: pytest.LogCaptureFixture,
+) -> None:
+    body = json.loads(json_response(transport.output_image).body)
+    body["job"]["status"] = "offline-secret\ncompleted"
+    transport.results.append(Response(json.dumps(body).encode(), content_type="application/json"))
+    with caplog.at_level("INFO", logger="plugin.mais_art_journal.api"):
+        assert generate(client, config(novelai_api_mode="json"))[0]
+    assert "job.status=[已隐藏密钥] completed" in caplog.text
+    assert "offline-secret" not in caplog.text and body["images"][0] not in caplog.text
+
+
+@pytest.mark.parametrize("base_url", [
+    "https://nai.rinko.ai", "https://nai.rinko.ai/", "https://nai.rinko.ai/v1",
+    "https://nai.rinko.ai/v1/", "https://nai.rinko.ai/v1/nai/generate-image",
+])
+@pytest.mark.parametrize("with_source", [False, True])
+def test_json_gateway_uses_native_request_and_decodes_single_image(
+    client: nai.NovelAIClient, transport: Transport, base_url: str, with_source: bool,
+) -> None:
+    settings = config(base_url=base_url, novelai_api_mode="json", novelai_request_timeout_seconds=310)
+    source = base64.b64encode(image_bytes()).decode("ascii") if with_source else None
+    transport.results.append(json_response(transport.output_image))
+    ok, result = generate(client, settings, input_image_base64=source)
+    assert ok and base64.b64decode(result, validate=True) == transport.output_image
+    request = transport.calls[0]
+    assert request["url"] == "https://nai.rinko.ai/v1/nai/generate-image"
+    assert request["headers"]["Accept"] == "application/json"
+    assert len(request["headers"]["Idempotency-Key"]) == 32
+    assert request["timeout"] == (10, 310)
+    body = request["json"]
+    assert set(body) == {"input", "model", "action", "parameters"}
+    assert body["action"] == ("img2img" if with_source else "generate")
+    assert body["parameters"]["v4_prompt"]["caption"]["base_caption"] == body["input"]
+    assert body["parameters"]["v4_negative_prompt"]["caption"]["base_caption"] == "watermark"
+
+
+def test_json_connection_retry_keeps_random_seed_and_idempotency_key(
+    client: nai.NovelAIClient, transport: Transport,
+) -> None:
+    settings = config(seed=-1, novelai_api_mode="json")
+    transport.results.extend([requests.ConnectTimeout("offline"), json_response(transport.output_image)])
+    assert generate(client, settings, max_retries=1)[0]
+    first, second = transport.calls
+    assert first["json"] == second["json"] and first["json"]["parameters"]["seed"] != -1
+    assert first["headers"]["Idempotency-Key"] == second["headers"]["Idempotency-Key"]
+    assert settings["seed"] == -1 and "_novelai_idempotency_key" not in settings
+    transport.results.append(json_response(transport.output_image))
+    assert generate(client, settings)[0]
+    assert transport.calls[-1]["headers"]["Idempotency-Key"] != first["headers"]["Idempotency-Key"]
+
+
+@pytest.mark.parametrize("body", [
+    [], {"images": [], "image_format": "png"},
+    {"images": ["invalid!"], "image_format": "png"},
+    {"images": ["aW52YWxpZA=="], "image_format": "png"},
+    {"images": [None], "image_format": "png"},
+    {"images": ["a", "b"], "image_format": "png"},
+    {"images": [], "job": {"status": "failed"}},
+    {"error": {"message": "offline-secret denied"}},
+])
+def test_invalid_json_generation_is_rejected_without_retry(
+    client: nai.NovelAIClient, transport: Transport, body: Any,
+) -> None:
+    transport.results.append(Response(json.dumps(body).encode(), content_type="application/json"))
+    ok, error = generate(client, config(novelai_api_mode="json"))
+    assert not ok and "offline-secret" not in error
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.parametrize("image_format", ["png", "webp", "jpeg"])
+def test_json_image_format_matches_actual_image(image_format: str) -> None:
+    content = image_bytes(image_format=image_format.upper())
+    assert nai.NovelAIClient._extract_image(json_response(content, image_format).body, "application/json") == content
+    with pytest.raises(NonRetryableError, match="不一致"):
+        nai.NovelAIClient._extract_image(json_response(content, "jpg" if image_format == "png" else "png").body, "application/json")
+
+
+def test_json_image_size_is_checked_before_base64_decode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(nai, "MAX_IMAGE_BYTES", 10)
+    with pytest.raises(NonRetryableError, match="大小限制"):
+        nai.NovelAIClient._extract_image(json_response(image_bytes()).body, "application/json")
+
+
+def test_json_response_limit_stops_stream_without_retry(
+    client: nai.NovelAIClient, transport: Transport, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(nai, "MAX_JSON_RESPONSE_BYTES", 128)
+    response = Response(b"", content_type="application/json", chunks=[b"a" * 100, b"b" * 100, b"c" * 100])
+    transport.results.append(response)
+    ok, error = generate(client, config(novelai_api_mode="json"))
+    assert not ok and "大小限制" in error
+    assert response.closed and response.read_count == 2 and len(transport.calls) == 1
+
+
+@pytest.mark.parametrize("image_format", [None, [], {}])
+def test_malformed_json_image_format_does_not_retry(
+    client: nai.NovelAIClient, transport: Transport, image_format: Any,
+) -> None:
+    response = json_response(transport.output_image)
+    body = json.loads(response.body)
+    body["image_format"] = image_format
+    transport.results.append(Response(json.dumps(body).encode(), content_type="application/json"))
+    ok, error = generate(client, config(novelai_api_mode="json"))
+    assert not ok and "image_format" in error and len(transport.calls) == 1
+
+
+def test_json_cfg_range_is_validated_at_save_and_at_request(client: nai.NovelAIClient, transport: Transport) -> None:
+    settings = ModelConfig(format="novelai", novelai_api_mode="json", guidance_scale=0)
+    assert settings.guidance_scale == 0
+    with pytest.raises(ValidationError):
+        ModelConfig(format="novelai", novelai_api_mode="json", guidance_scale=11)
+    transport.results.append(json_response(transport.output_image))
+    assert generate(client, config(novelai_api_mode="json", guidance_scale=0))[0]
+    assert transport.calls[0]["json"]["parameters"]["scale"] == 0
+
+
+@pytest.mark.parametrize("changes,size", [({"guidance_scale": 11}, "64x64"), ({}, "2048x2048")])
+def test_json_gateway_rejects_parameters_outside_documented_limits(
+    client: nai.NovelAIClient, transport: Transport, changes: Dict[str, Any], size: str,
+) -> None:
+    assert not generate(client, config(novelai_api_mode="json", **changes), size=size)[0]
+    assert transport.calls == []
+
+
 @pytest.mark.parametrize("changes,expected", [
     ({"model": "nai-diffusion-5-unimplemented"}, "不支持模型"),
     ({"num_inference_steps": 51}, "steps"),
@@ -185,7 +469,7 @@ def test_bearer_prefix_is_applied_once(client: nai.NovelAIClient, transport: Tra
     ({"novelai": {"n_samples": 2}}, "n_samples"),
     ({"novelai": {"extra_parameters": {"n_samples": 20}}}, "extra_parameters"),
     ({"novelai": {"img2img_noise": 1.1}}, "img2img_noise"),
-    ({"novelai": {"request_timeout_seconds": 200}}, "request_timeout_seconds"),
+    ({"novelai": {"request_timeout_seconds": 311}}, "request_timeout_seconds"),
     ({"api_key": "Bearer "}, "密钥"),
     ({"api_key": "secret\r\nHeader:value"}, "密钥"),
     ({"base_url": "file:///offline"}, "base_url"),
@@ -244,12 +528,13 @@ def test_dataset_modes_keep_the_configured_model(
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 429, 500])
+@pytest.mark.parametrize("api_mode", ["official", "json"])
 def test_http_failure_does_not_retry_or_change_size(
-    client: nai.NovelAIClient, transport: Transport, status: int,
+    client: nai.NovelAIClient, transport: Transport, status: int, api_mode: str,
 ) -> None:
     response = Response(json.dumps({"error": {"message": "拒绝 offline-secret"}}).encode(), status=status, content_type="application/json")
     transport.results.append(response)
-    ok, error = generate(client, input_image_base64=base64.b64encode(image_bytes((128, 64))).decode("ascii"))
+    ok, error = generate(client, config(novelai_api_mode=api_mode), input_image_base64=base64.b64encode(image_bytes((128, 64))).decode("ascii"))
     assert not ok and f"HTTP {status}" in error
     assert "offline-secret" not in error and "已隐藏密钥" in error
     assert len(transport.calls) == 1 and response.closed
@@ -270,9 +555,10 @@ def test_config_error_does_not_echo_unknown_values(client: nai.NovelAIClient, tr
 
 
 @pytest.mark.parametrize("failure", [requests.ReadTimeout("offline"), requests.ConnectionError("offline")])
-def test_unknown_network_result_is_not_retried(client: nai.NovelAIClient, transport: Transport, failure: Exception) -> None:
+@pytest.mark.parametrize("api_mode", ["official", "json"])
+def test_unknown_network_result_is_not_retried(client: nai.NovelAIClient, transport: Transport, failure: Exception, api_mode: str) -> None:
     transport.results.append(failure)
-    ok, error = generate(client)
+    ok, error = generate(client, config(novelai_api_mode=api_mode))
     assert not ok and "不自动重试" in error and len(transport.calls) == 1
 
 

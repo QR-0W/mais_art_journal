@@ -21,6 +21,7 @@ async def render_help(dctx: "DispatcherContext") -> CommandResult:
         "📋 基本命令：",
         f"• {prefix} <风格名> - 对最近的图片应用风格",
         f"• {prefix} <描述> - 自然语言生成图片",
+        f"• {prefix} 用model4画一只猫 - 指定本次模型，也支持“用模型四”",
         f"• {prefix} styles - 列出所有可用风格",
         f"• {prefix} list - 查看所有模型",
         f"• {prefix} config - 查看当前配置",

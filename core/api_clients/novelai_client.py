@@ -18,13 +18,15 @@ import requests
 import secrets
 import zipfile
 
-from ..config.novelai import NovelAIConfig
+from ..config.novelai import NOVELAI_FIELD_NAMES, NovelAIConfig
 from ..prompts.novelai_prompt import convert_novelai_weights
 from .base_client import BaseApiClient, NonRetryableError, logger
 
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+# 25 MiB 图片转为 Base64 后约为 33.4 MiB，JSON 响应另留包装余量。
+MAX_JSON_RESPONSE_BYTES = 36 * 1024 * 1024
 MAX_SOURCE_PIXELS = 16 * 1024 * 1024
 MAX_ZIP_ENTRIES = 16
 _SAMPLERS = {
@@ -100,6 +102,21 @@ class NovelAIClient(BaseApiClient):
 
     format_name = "novelai"
 
+    async def generate_image(
+        self, prompt: str, model_config: Dict[str, Any], size: str,
+        strength: Optional[float] = None, input_image_base64: Optional[str] = None,
+        max_retries: int = 2,
+    ) -> Tuple[bool, str]:
+        # 一次生成的连接重试复用相同种子与幂等键，调用方配置不被修改。
+        prepared_config = dict(model_config)
+        seed = prepared_config.get("seed", -1)
+        if isinstance(seed, int) and not isinstance(seed, bool) and seed == -1:
+            prepared_config["seed"] = secrets.randbelow(2**32)
+        prepared_config["_novelai_idempotency_key"] = secrets.token_hex(16)
+        return await super().generate_image(
+            prompt, prepared_config, size, strength, input_image_base64, max_retries,
+        )
+
     def _make_request(
         self,
         prompt: str,
@@ -116,25 +133,40 @@ class NovelAIClient(BaseApiClient):
         except ValueError as exc:
             raise NonRetryableError("NovelAI base_url 格式无效") from exc
         if parts.scheme not in {"http", "https"} or not parts.netloc or parts.username or parts.password or parts.query or parts.fragment:
-            raise NonRetryableError("NovelAI base_url 须为不含账号、查询参数或片段的 HTTP(S) 服务根地址")
+            raise NonRetryableError("NovelAI base_url 须为不含账号、查询参数或片段的 HTTP(S) API 地址")
+        if settings.api_mode == "json":
+            if parts.path.endswith("/v1/nai/generate-image"):
+                endpoint = base_url
+            elif parts.path.endswith("/v1"):
+                endpoint = base_url + "/nai/generate-image"
+            else:
+                endpoint = base_url + "/v1/nai/generate-image"
+        else:
+            endpoint = base_url + "/ai/generate-image"
         token = re.sub(r"^(?i:bearer\s+)+", "", _text(model_config, "api_key").strip())
         if not token or token.casefold() == "bearer" or any(ord(character) < 33 or ord(character) > 126 for character in token):
             raise NonRetryableError("NovelAI API 密钥为空或含无效字符")
         request_args: Dict[str, Any] = {
-            "url": base_url + "/ai/generate-image",
-            "headers": {"Authorization": "Bearer " + token, "Accept": "application/zip, image/png", "Content-Type": "application/json"},
+            "url": endpoint,
+            "headers": {
+                "Authorization": "Bearer " + token,
+                "Accept": "application/json" if settings.api_mode == "json" else "application/zip, image/png",
+                "Content-Type": "application/json",
+            },
             "json": payload,
             "timeout": (min(10, settings.request_timeout_seconds), settings.request_timeout_seconds),
             "stream": True,
             "allow_redirects": False,
         }
+        if settings.api_mode == "json":
+            request_args["headers"]["Idempotency-Key"] = model_config.get("_novelai_idempotency_key") or secrets.token_hex(16)
         proxy = self._get_proxy_config()
         if proxy is not None:
             request_args["proxies"] = {"http": proxy["http"], "https": proxy["https"]}
         logger.info("%s (NovelAI) 生成单张图片：model=%s action=%s size=%s", self.log_prefix, payload["model"], payload["action"], size)
         try:
             with requests.post(**request_args) as response:
-                content = self._read_response(response)
+                content = self._read_response(response, MAX_JSON_RESPONSE_BYTES if settings.api_mode == "json" else MAX_RESPONSE_BYTES)
                 if response.status_code not in {200, 201}:
                     reason = self._error_message(content, token)
                     raise NonRetryableError(f"NovelAI 请求失败：HTTP {response.status_code}，{reason}")
@@ -151,8 +183,10 @@ class NovelAIClient(BaseApiClient):
 
     @staticmethod
     def _settings(model_config: Dict[str, Any]) -> NovelAIConfig:
-        value = model_config.get("novelai", {})
         try:
+            # 兼容独立调用方的旧字典；正式模型配置已在升级入口转为直接字段。
+            value = NovelAIConfig.model_validate(model_config.get("novelai", {})).model_dump()
+            value.update({name: model_config[field] for name, field in NOVELAI_FIELD_NAMES.items() if field in model_config})
             return NovelAIConfig.model_validate(value)
         except ValidationError as exc:
             details = "; ".join(
@@ -183,6 +217,8 @@ class NovelAIClient(BaseApiClient):
         width, height = (int(part) for part in dimensions.groups())
         if any(value < 64 or value > 2048 or value % 64 for value in (width, height)):
             raise NonRetryableError("NovelAI 宽高须为 64 到 2048 之间的 64 倍数")
+        if settings.api_mode == "json" and width * height > 3_145_728:
+            raise NonRetryableError("NovelAI JSON 接口总像素不得超过 3,145,728")
         is_img2img = input_image_base64 is not None
         if version == "v3":
             expected_mode = "furry" if model == "nai-diffusion-furry-3" else "anime"
@@ -223,7 +259,7 @@ class NovelAIClient(BaseApiClient):
             "params_version": 4, "width": width, "height": height,
             "n_samples": 1, "seed": seed, "sampler": sampler,
             "steps": int(_number(model_config.get("num_inference_steps", 28), "steps", 1, 50, integer=True)),
-            "scale": _number(model_config.get("guidance_scale", 5.0), "scale", 0.1, 20),
+            "scale": _number(model_config.get("guidance_scale", 5.0), "scale", 0 if settings.api_mode == "json" else 0.1, 10 if settings.api_mode == "json" else 20),
             "cfg_rescale": _number(model_config.get("cfg", 0.0), "CFG Rescale", 0.0, 1.0),
             "noise_schedule": noise_schedule, "negative_prompt": negative_prompt,
             "legacy": False, "legacy_v3_extend": False, "dynamic_thresholding": False,
@@ -285,19 +321,19 @@ class NovelAIClient(BaseApiClient):
         return base64.b64encode(image_bytes).decode("ascii")
 
     @staticmethod
-    def _read_response(response: requests.Response) -> bytes:
+    def _read_response(response: requests.Response, maximum: int = MAX_RESPONSE_BYTES) -> bytes:
         content_length = response.headers.get("Content-Length")
         if content_length is not None:
             try:
                 declared_size = int(content_length)
             except ValueError as exc:
                 raise NonRetryableError("NovelAI 响应的 Content-Length 无效") from exc
-            if declared_size < 0 or declared_size > MAX_RESPONSE_BYTES:
-                raise NonRetryableError("NovelAI 响应超过 32 MiB 大小限制或长度无效")
+            if declared_size < 0 or declared_size > maximum:
+                raise NonRetryableError(f"NovelAI 响应超过 {maximum // (1024 * 1024)} MiB 大小限制或长度无效")
         chunks = BytesIO()
         for chunk in response.iter_content(chunk_size=64 * 1024):
-            if chunks.tell() + len(chunk) > MAX_RESPONSE_BYTES:
-                raise NonRetryableError("NovelAI 响应超过 32 MiB 大小限制")
+            if chunks.tell() + len(chunk) > maximum:
+                raise NonRetryableError(f"NovelAI 响应超过 {maximum // (1024 * 1024)} MiB 大小限制")
             chunks.write(chunk)
         return chunks.getvalue()
 
@@ -326,10 +362,60 @@ class NovelAIClient(BaseApiClient):
         elif content_type.lower().split(";", 1)[0] in {"image/png", "image/jpeg", "image/webp"}:
             image_bytes = content
         elif "json" in content_type.lower():
-            raise NonRetryableError("NovelAI 返回 JSON 而非图片：" + cls._error_message(content, token))
+            return cls._extract_json_image(content, token)
         else:
             raise NonRetryableError("NovelAI 响应不是原生 ZIP 或支持的图片格式")
         cls._validate_image(image_bytes, "生成图片")
+        return image_bytes
+
+    @classmethod
+    def _extract_json_image(cls, content: bytes, token: str) -> bytes:
+        """解析原生 NAI JSON 单图响应，拒绝错误、损坏或多图结果。"""
+        try:
+            body = json.loads(content)
+        except (ValueError, UnicodeDecodeError, RecursionError) as exc:
+            raise NonRetryableError("NovelAI JSON 响应格式无效") from exc
+        if not isinstance(body, dict):
+            raise NonRetryableError("NovelAI JSON 响应须为对象")
+        if body.get("error") or body.get("success") is False or "images" not in body:
+            raise NonRetryableError("NovelAI JSON 返回错误：" + cls._error_message(content, token))
+        job = body.get("job")
+        if job is not None and not isinstance(job, dict):
+            raise NonRetryableError("NovelAI JSON job 字段须为对象")
+        status = job.get("status") if isinstance(job, dict) else None
+        if status is not None and not isinstance(status, str):
+            raise NonRetryableError("NovelAI JSON job.status 须为字符串")
+        normalized_status = status.strip().casefold() if isinstance(status, str) else ""
+        # job 是附加任务信息，不要求与文档示例使用相同的成功状态名称。
+        # 缺失/未知状态时仍须通过完整单图校验，显式失败及未完成状态不能投递。
+        blocked_states = {
+            "failed", "failure", "error", "cancelled", "canceled", "timeout", "timed_out",
+            "queued", "pending", "running", "processing", "generating", "submitted",
+        }
+        safe_status = status.replace(token, "[已隐藏密钥]")[:80] if status and token else (status or "<missing>")[:80]
+        safe_status = re.sub(r"[\r\n\x00-\x1f\x7f]", " ", safe_status)
+        if normalized_status in blocked_states:
+            raise NonRetryableError(f"NovelAI JSON 生成任务未成功：status={safe_status}，不自动重试")
+        images = body["images"]
+        if not isinstance(images, list) or len(images) != 1:
+            raise NonRetryableError("NovelAI JSON 响应须包含恰好一张图片")
+        encoded = images[0]
+        if not isinstance(encoded, str) or not encoded:
+            raise NonRetryableError("NovelAI JSON 图片须为非空 Base64 字符串")
+        if len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
+            raise NonRetryableError("NovelAI JSON 图片超过 25 MiB 大小限制")
+        try:
+            image_bytes = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise NonRetryableError("NovelAI JSON 图片 Base64 编码无效") from exc
+        cls._validate_image(image_bytes, "JSON 生成图片")
+        image_format = body.get("image_format")
+        if not isinstance(image_format, str) or image_format not in {"png", "jpeg", "jpg", "webp"}:
+            raise NonRetryableError("NovelAI JSON image_format 须为 png/jpeg/jpg/webp")
+        with Image.open(BytesIO(image_bytes)) as image:
+            if image.format.lower() != ("jpeg" if image_format == "jpg" else image_format):
+                raise NonRetryableError("NovelAI JSON image_format 与图片内容不一致")
+        logger.info("(NovelAI JSON) 已校验单张图片：job.status=%s format=%s bytes=%d", safe_status, image_format, len(image_bytes))
         return image_bytes
 
     @staticmethod

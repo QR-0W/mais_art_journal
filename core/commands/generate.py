@@ -222,32 +222,48 @@ async def _execute_natural_mode(
 
 # ==================== 工具 ====================
 
+_CHINESE_DIGITS = {character: value for value, characters in enumerate(("零〇", "一", "二两", "三", "四", "五", "六", "七", "八", "九")) for character in characters}
+_CHINESE_UNITS = {"十": 10, "百": 100, "千": 1000}
+_MODEL_SELECTOR = r'(?:model(?P<digits>[0-9]+)(?![A-Za-z0-9_])|(?:模型|型号)\s*(?P<number>[0-9]+|[零〇一二两三四五六七八九十百千]+))'
+# 提取和移除共用同一匹配，保证“用模型四”不会残留进图片提示词。
 _MODEL_ID_PATTERNS = [
-    re.compile(r'(?:用|使用)\s*(model\d+)', re.IGNORECASE),
-    re.compile(r'(?:用|使用)\s*(?:模型|型号)\s*(\d+)', re.IGNORECASE),
-    re.compile(r'^(model\d+)', re.IGNORECASE),
+    re.compile(r'(?:使用|用)\s*' + _MODEL_SELECTOR, re.IGNORECASE),
+    re.compile(r'^\s*' + _MODEL_SELECTOR, re.IGNORECASE),
 ]
+
+
+def _model_number(value: str) -> int:
+    """支持阿拉伯编号、逐位中文编号及十/百/千中文编号。"""
+    if value.isascii() and value.isdigit():
+        return int(value)
+    if not any(character in _CHINESE_UNITS for character in value):
+        return int("".join(str(_CHINESE_DIGITS[character]) for character in value))
+    total, digit = 0, 0
+    for character in value:
+        if character in _CHINESE_UNITS:
+            total += (digit or 1) * _CHINESE_UNITS[character]
+            digit = 0
+        else:
+            digit = _CHINESE_DIGITS[character]
+    return total + digit
 
 
 def _extract_model_id(description: str) -> Optional[str]:
     for pat in _MODEL_ID_PATTERNS:
         match = pat.search(description)
         if match:
-            mid = match.group(1)
-            if mid.isdigit():
-                mid = f"model{mid}"
-            return mid.lower()
+            digits = match.group("digits")
+            if digits is not None:
+                return "model" + digits
+            return f"model{_model_number(match.group('number'))}"
     return None
 
 
-_MODEL_PATTERN_REMOVE = [
-    re.compile(r'(?:用|使用)\s*model\d+\s*(?:画|生成|创作)?', re.IGNORECASE),
-    re.compile(r'(?:用|使用)\s*(?:模型|型号)\s*\d+\s*(?:画|生成|创作)?', re.IGNORECASE),
-    re.compile(r'^model\d+\s*(?:画|生成|创作)?', re.IGNORECASE),
-]
-
-
 def _remove_model_pattern(description: str) -> str:
-    for pat in _MODEL_PATTERN_REMOVE:
-        description = pat.sub("", description)
+    for pat in _MODEL_ID_PATTERNS:
+        match = pat.search(description)
+        if match:
+            remainder = description[match.end():]
+            remainder = re.sub(r'^\s*(?:画|生成|创作)?\s*', "", remainder, count=1)
+            return (description[:match.start()] + remainder).strip()
     return description.strip()

@@ -334,7 +334,7 @@ class MaisArtPlugin(MaiBotPlugin):
         ),
         version="1",
         public=True,
-        timeout_ms=180000,
+        timeout_ms=660000,
     )
     @_tracked_operation
     async def api_generate_image(

@@ -11,6 +11,11 @@ class NovelAIConfig(PluginConfigBase):
 
     __ui_label__ = "原生 NovelAI"
 
+    api_mode: Literal["official", "json"] = Field(
+        default="official",
+        description="official 使用官方图片接口；json 使用原生 NAI 请求体、JSON/Base64 返回的 /v1/nai/generate-image 接口",
+        json_schema_extra={"label": "NAI 接口类型", "order": 0},
+    )
     mode: Literal["anime", "furry", "background"] = Field(
         default="anime",
         description="数据集模式；V3 须与 Anime/Furry 模型对应，background 仅支持 V4.5/V5",
@@ -42,7 +47,11 @@ class NovelAIConfig(PluginConfigBase):
         json_schema_extra={"label": "图生图噪声", "step": 0.05, "order": 5},
     )
     request_timeout_seconds: int = Field(
-        default=120, ge=5, le=150,
-        description="单次 HTTP 请求超时，仍受绘卷整条生成链的总时限约束",
+        default=120, ge=5, le=310,
+        description="单次 HTTP 请求超时；YesNovelAI 建议 310 秒，仍受绘卷和调用方总时限约束",
         json_schema_extra={"label": "请求超时（秒）", "order": 6},
     )
+
+
+# 模型列表的 WebUI Schema 只支持一层字段，因此专属选项保存为模型的直接字段。
+NOVELAI_FIELD_NAMES = {name: "novelai_" + name for name in NovelAIConfig.model_fields}

@@ -21,7 +21,7 @@
 |------|------|
 | `/dr <风格名>` | 对最近的图片应用预设风格（图生图） |
 | `/dr <描述>` | 自然语言生成图片（自动判断文/图生图） |
-| `/dr 用model2画一只猫` | 指定模型生成 |
+| `/dr 用model2画一只猫` | 指定模型生成，也支持 `用模型2`、`用模型二`、`model2`、`模型2` |
 
 #### 风格管理
 
@@ -119,7 +119,7 @@
 ```toml
 [plugin]
 enabled = true                    # 启用插件
-config_version = "4.6.2"          # 插件配置版本，自动维护，请勿改
+config_version = "4.6.3"          # 插件配置版本，自动维护，请勿改
 
 [basic]
 command_prefix = "/dr"            # 命令前缀，可改 /dv、/draw 等，必须以 / 开头
@@ -138,7 +138,7 @@ auto_recall_enabled = false       # 自动撤回总开关（还需在模型配�
 prompt_optimizer_enabled = true   # 普通图/自拍场景优化；关闭后发布判断、尺寸选择、配文仍可用 LLM
 llm_task_name = "utils"           # 辅助 LLM 任务名：utils / replyer / planner / memory / learner
 llm_timeout_seconds = 45          # 辅助 LLM 每次调用超时（秒），包含主动判断
-generation_timeout_seconds = 170 # 普通后端完整生成总超时；ComfyUI 另按等待时间预留
+generation_timeout_seconds = 170 # 普通后端完整生成总超时；YesNovelAI 建议 420；ComfyUI 另按等待时间预留
 proactive_min_energy = 30         # 所有主动图的最低精力，MaiTrace 生活状态使用 0-100
 ```
 
@@ -190,7 +190,7 @@ auto_recall_delay = 0            # 0 不撤回；启用还需 basic.auto_recall_
 
 #### 原生 NovelAI
 
-在模型列表新增一项，通用参数仍写在该项中，专属参数写在紧随其后的 `[models.items.novelai]`：
+在模型列表新增一项。NAI 专属参数与通用参数写在同一项中，均可在 WebUI 的模型列表直接配置；旧版 `[models.items.novelai]` 会在升级时迁移并保留已有值。
 
 ```toml
 [[models.items]]
@@ -208,17 +208,21 @@ custom_prompt_add = ""
 negative_prompt_add = "lowres, bad anatomy, bad hands"
 support_img2img = true
 
-[models.items.novelai]
-mode = "anime"                   # anime / furry；background 仅 V4.5/V5
-quality_tags = true
-smea = false                     # SMEA 仅支持 V3 文生图
-smea_dynamic = false             # 开启时还需 smea = true
-img2img_strength = 0.6           # 普通图生图强度；自拍用 selfie_reference_strength
-img2img_noise = 0.1
-request_timeout_seconds = 120
+novelai_api_mode = "official"     # official / json；YesNovelAI 用 json
+novelai_mode = "anime"            # anime / furry；background 仅 V4.5/V5
+novelai_quality_tags = true
+novelai_smea = false              # SMEA 仅支持 V3 文生图
+novelai_smea_dynamic = false      # 开启时还需 novelai_smea = true
+novelai_img2img_strength = 0.6     # 普通图生图强度；自拍用 selfie_reference_strength
+novelai_img2img_noise = 0.1
+novelai_request_timeout_seconds = 120
 ```
 
-宽高须为 64–2048 之间的 64 倍数。支持的型号有 `nai-diffusion-3`、`nai-diffusion-furry-3`、`nai-diffusion-4-full`、`nai-diffusion-4-curated-preview`、`nai-diffusion-4-5-full`、`nai-diffusion-4-5-curated`、`nai-diffusion-5-full`、`nai-diffusion-5-curated`。V3 的 `mode` 须与 Anime/Furry 型号对应；V4+ 通过数据集标签切换模式。不支持的型号或参数组合会报错。
+宽高须为 64–2048 之间的 64 倍数。支持的型号有 `nai-diffusion-3`、`nai-diffusion-furry-3`、`nai-diffusion-4-full`、`nai-diffusion-4-curated-preview`、`nai-diffusion-4-5-full`、`nai-diffusion-4-5-curated`、`nai-diffusion-5-full`、`nai-diffusion-5-curated`。V3 的 `novelai_mode` 须与 Anime/Furry 型号对应；V4+ 通过数据集标签切换模式。不支持的型号或参数组合会报错。
+
+接入 [YesNovelAI](https://nai.rinko.ai/docs) 时，设置 `format = "novelai"`、`novelai_api_mode = "json"`、`base_url = "https://nai.rinko.ai"`、`api_key = "ynai-你的令牌"`，模型可用 `nai-diffusion-4-5-full`。JSON 模式也接受 `https://nai.rinko.ai/v1` 或完整的 `/v1/nai/generate-image` 地址，请求仍是原生 NAI 格式。总像素不得超过 3,145,728，CFG 最大 10。
+
+建议将该模型的 `novelai_request_timeout_seconds` 设为 `310`，同时在 `[basic]` 将 `generation_timeout_seconds` 设为 `420`，为提示词优化和图片处理留出时间。对外生图 API 支持最长 660 秒；自动自拍和群主动图片仍受各自周期及调用方的总时限限制。JSON 请求使用幂等键；响应超时、断线或 HTTP 错误不会自动重发。
 
 #### ComfyUI
 

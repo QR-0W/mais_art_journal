@@ -17,6 +17,7 @@ import tomlkit
 
 from .backup import backup_config_if_version_changed
 from .models import BasicSection, MaisArtConfig, SelfieSection
+from .novelai import NOVELAI_FIELD_NAMES, NovelAIConfig
 
 
 def _version_key(version: str) -> Tuple[int, int, int]:
@@ -116,6 +117,21 @@ def _convert_styles(data: Dict[str, Any]) -> None:
     data["styles"] = {"items": items}
 
 
+def _flatten_novelai_options(data: Dict[str, Any]) -> None:
+    """在 SDK 移除旧字段之前保留 NAI 嵌套配置，新直接字段优先。"""
+    section = data.get("models", {})
+    if not isinstance(section, dict) or not isinstance(section.get("items", []), list):
+        return
+    for item in section.get("items", []):
+        if not isinstance(item, dict) or "novelai" not in item:
+            continue
+        old = item.pop("novelai")
+        # 只迁移用户已有的字段，缺省值随后由 SDK 统一补齐。
+        NovelAIConfig.model_validate(old)
+        for name, value in old.items():
+            item.setdefault(NOVELAI_FIELD_NAMES[name], value)
+
+
 def normalize_config_for_upgrade(
     config_data: Optional[Mapping[str, Any]],
 ) -> Tuple[Dict[str, Any], bool]:
@@ -131,6 +147,7 @@ def normalize_config_for_upgrade(
     migrated = deepcopy(dict(config_data))
     _convert_legacy_sections(migrated)
     _convert_models(migrated)
+    _flatten_novelai_options(migrated)
     _convert_styles(migrated)
     # 必须先改名和转结构，再交给 SDK 移除废弃字段、补齐默认值和更新版本号。
     rebuilt = rebuild_plugin_config_data(defaults, migrated)

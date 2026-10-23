@@ -335,7 +335,7 @@ def test_invalid_api_arguments_keep_the_public_response_shape(arguments: Dict[st
 
 def test_api_metadata_has_generation_budget(tmp_path: Path) -> None:
     component = next(item for item in make_plugin(tmp_path).get_components() if item["name"] == "generate_image")
-    assert component["metadata"]["timeout_ms"] == 180000
+    assert component["metadata"]["timeout_ms"] == 660000
 
 
 def test_auto_selfie_requires_activity_and_skips_disabled_activity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

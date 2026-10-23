@@ -11,7 +11,6 @@ from maibot_sdk import Field, PluginConfigBase
 from pydantic import field_validator, model_validator
 from typing import List, Literal
 
-from .novelai import NovelAIConfig
 from .quota import QuotaSection
 from ..selfie.activity_rules import default_activity_rules
 from ..selfie.schedule_provider import ActivityType
@@ -31,7 +30,7 @@ class PluginSection(PluginConfigBase):
         json_schema_extra={"label": "插件名称", "disabled": True, "order": 1},
     )
     config_version: str = Field(
-        default="4.6.2",
+        default="4.6.3",
         description="插件配置版本，由插件自动维护，升级时用于备份和迁移已有配置",
         json_schema_extra={"label": "配置版本", "disabled": True, "order": 2},
     )
@@ -189,8 +188,8 @@ class BasicSection(PluginConfigBase):
         json_schema_extra={"label": "辅助 LLM 超时", "order": 62},
     )
     generation_timeout_seconds: int = Field(
-        default=170, ge=10, le=175,
-        description="普通后端完整生图总超时（秒），含 LLM、图片请求和重试；ComfyUI 内部至少预留 wait_seconds+60 秒，外层 API/任务时限仍生效",
+        default=170, ge=10, le=600,
+        description="普通后端完整生图总超时（秒），含 LLM、图片请求和重试；YesNovelAI 建议 420 秒；ComfyUI 内部至少预留 wait_seconds+60 秒，外层 API/任务时限仍生效",
         json_schema_extra={"label": "生图总超时", "order": 63},
     )
     proactive_min_energy: float = Field(
@@ -544,7 +543,7 @@ class ProxySection(PluginConfigBase):
         default=60,
         ge=10,
         le=300,
-        description="启用代理时多数图片客户端的单次 HTTP 超时（秒），含响应等待；不是生成总时限。ComfyUI 使用自身请求/轮询超时，原生 NovelAI 使用 novelai.request_timeout_seconds",
+        description="启用代理时多数图片客户端的单次 HTTP 超时（秒），含响应等待；不是生成总时限。ComfyUI 使用自身请求/轮询超时，原生 NovelAI 使用 novelai_request_timeout_seconds",
         json_schema_extra={
             "label": "代理请求超时",
             "depends_on": "proxy.enabled",
@@ -620,7 +619,7 @@ class ModelConfig(PluginConfigBase):
     )
     base_url: str = Field(
         default="https://api-inference.modelscope.cn/v1",
-        description="API 服务地址",
+        description="API 服务地址；原生 NAI 的 JSON 模式可填站点根地址、/v1 基址或完整 /v1/nai/generate-image 地址",
         json_schema_extra={
             "label": "API地址",
             "placeholder": "https://api.example.com/v1",
@@ -683,7 +682,7 @@ class ModelConfig(PluginConfigBase):
         default=2.5,
         ge=-1.0,
         le=20.0,
-        description="扩散引导强度。OpenAI/豆包/魔搭/砂糖云/梦羽支持 -1 不发送；ComfyUI 的 -1 使用 7。原生 NovelAI 须为 0.1-20；Gemini/OpenAI-Chat/DashScope 不使用",
+        description="扩散引导强度。OpenAI/豆包/魔搭/砂糖云/梦羽支持 -1 不发送；ComfyUI 的 -1 使用 7。原生 NovelAI 官方模式 0.1-20，JSON 模式 0-10；Gemini/OpenAI-Chat/DashScope 不使用",
         json_schema_extra={"label": "引导强度", "step": 0.5, "group": "params", "order": 9},
     )
     num_inference_steps: int = Field(
@@ -789,10 +788,46 @@ class ModelConfig(PluginConfigBase):
         json_schema_extra={"label": "梦羽图片上传地址", "group": "mengyuai", "order": 24.1},
     )
 
-    novelai: NovelAIConfig = Field(
-        default_factory=NovelAIConfig,
-        description="原生 NovelAI 专属参数，仅 format=novelai 生效",
-        json_schema_extra={"label": "原生 NovelAI", "group": "novelai", "order": 25},
+    # SDK 的列表表单不展开嵌套对象，NAI 选项直接放在每个模型中。
+    novelai_api_mode: Literal["official", "json"] = Field(
+        default="official",
+        description="仅原生 NAI：official 使用官方图片接口；json 使用 /v1/nai/generate-image，返回 JSON/Base64",
+        json_schema_extra={"label": "NAI 接口类型", "group": "novelai", "order": 25},
+    )
+    novelai_mode: Literal["anime", "furry", "background"] = Field(
+        default="anime",
+        description="NAI 数据集模式；V3 须与模型对应，background 仅 V4.5/V5",
+        json_schema_extra={"label": "NAI 数据集模式", "group": "novelai", "order": 26},
+    )
+    novelai_quality_tags: bool = Field(
+        default=True,
+        description="原生 NAI：在本地按模型版本追加质量标签",
+        json_schema_extra={"label": "NAI 添加质量标签", "group": "novelai", "order": 27},
+    )
+    novelai_smea: bool = Field(
+        default=False,
+        description="原生 NAI：SMEA，仅支持 V3 文生图",
+        json_schema_extra={"label": "NAI SMEA", "group": "novelai", "order": 28},
+    )
+    novelai_smea_dynamic: bool = Field(
+        default=False,
+        description="原生 NAI：动态 SMEA，须同时开启 SMEA",
+        json_schema_extra={"label": "NAI 动态 SMEA", "group": "novelai", "order": 29},
+    )
+    novelai_img2img_strength: float = Field(
+        default=0.6, ge=0.0, le=1.0,
+        description="原生 NAI 普通图生图强度；自拍使用 selfie_reference_strength，本次显式强度优先",
+        json_schema_extra={"label": "NAI 图生图强度", "group": "novelai", "order": 30},
+    )
+    novelai_img2img_noise: float = Field(
+        default=0.1, ge=0.0, le=1.0,
+        description="原生 NAI 图生图的附加噪声，文生图不使用",
+        json_schema_extra={"label": "NAI 图生图噪声", "group": "novelai", "order": 31},
+    )
+    novelai_request_timeout_seconds: int = Field(
+        default=120, ge=5, le=310,
+        description="原生 NAI 单次 HTTP 超时；YesNovelAI 建议 310 秒，同时将基础生图总超时设为 420 秒",
+        json_schema_extra={"label": "NAI 请求超时（秒）", "group": "novelai", "order": 32},
     )
 
     # ---- DashScope（阿里百炼）专属 ----
@@ -841,8 +876,10 @@ class ModelConfig(PluginConfigBase):
             raise ValueError("num_inference_steps 不能为 0；正数为步数，-1 仅供支持省略的后端")
         if self.num_inference_steps <= 0 and self.format in {"modelscope", "shatangyun", "mengyuai", "comfyui", "novelai"}:
             raise ValueError(f"{self.format} 的 num_inference_steps 须为正数，-1 仅供 OpenAI 网关省略参数")
-        if self.format == "novelai" and (self.num_inference_steps > 50 or self.guidance_scale < 0.1):
-            raise ValueError("原生 NovelAI 步数须为 1-50，guidance_scale 须为 0.1-20")
+        if self.format == "novelai":
+            minimum, maximum = (0, 10) if self.novelai_api_mode == "json" else (0.1, 20)
+            if self.num_inference_steps > 50 or not minimum <= self.guidance_scale <= maximum:
+                raise ValueError(f"原生 NovelAI 步数须为 1-50，guidance_scale 须为 {minimum}-{maximum}")
         return self
 
 
