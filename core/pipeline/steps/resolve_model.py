@@ -10,8 +10,8 @@
   3. 有输入图 (img2img) 且配了图生图模型  → basic.default_img2img_model（留空→下一行）
   4. 兜底                                 → basic.default_txt2img_model
 
-各层留空即向下一层回退。普通自拍必然携带参考图（selfie.reference_image_path），
-所以即使自拍模型留空，也会落到第 3 层的图生图模型，不会滑进纯文生图模型。
+各层留空即向下一层回退。自拍参考图（selfie.reference_image_path）可选，
+有参考图时使用第 3 层的图生图模型，没有参考图时使用第 4 层的文生图模型。
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ...config import resolve_img2img_model, resolve_txt2img_model
-from ...state import runtime_state
 from ..result import StepResult
 from ..step import BaseStep
 
@@ -52,18 +51,18 @@ class ResolveModel(BaseStep):
             plugin = ctx.plugin
             if req.source in ("cmd_style", "cmd_natural"):
                 global_default = plugin.config.basic.pic_command_model
-                req.model_id = runtime_state.get_command_default_model(req.chat_id, global_default)
+                req.model_id = ctx.plugin.runtime_state.get_command_default_model(req.chat_id, global_default)
             elif req.source == "auto_selfie":
-                # 自动自拍沿用专用模型；留空时走通用回退链（多半落到图生图模型）
+                # 自动自拍沿用专用模型；留空时按是否有参考图走通用回退链。
                 auto_model = (plugin.config.selfie.selfie_model or "").strip()
                 req.model_id = auto_model or _resolve_default_model(plugin, req)
             elif req.source == "standalone":
                 req.model_id = _resolve_default_model(plugin, req)
             else:  # action（LLM 自然语言触发，含普通自拍）
-                runtime_override = runtime_state.get_action_default_model(req.chat_id, "")
+                runtime_override = plugin.runtime_state.get_action_default_model(req.chat_id, "")
                 req.model_id = runtime_override or _resolve_default_model(plugin, req)
 
-        if req.source != "standalone" and not runtime_state.is_model_enabled(req.chat_id, req.model_id):
+        if req.source != "standalone" and not ctx.plugin.runtime_state.is_model_enabled(req.chat_id, req.model_id):
             return StepResult.fail(
                 error=f"模型 {req.model_id} 已禁用",
                 user_message=f"模型 {req.model_id} 当前不可用",

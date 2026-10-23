@@ -1,8 +1,18 @@
-import logging
-from typing import Optional, Dict, Any
 from threading import Lock
+from typing import Any, Dict, Optional
+
+import hashlib
+import json
+import logging
 
 logger = logging.getLogger("plugin.mais_art_journal.cache")
+
+def request_cache_identity(model_config: Dict[str, Any], description: str, input_image_base64: Optional[str] = None) -> str:
+    """完整参数与源图参与缓存身份，配置或参考图变化后不能复用旧生成结果。"""
+    payload = json.dumps({
+        "model": model_config, "prompt": description, "source_image": input_image_base64,
+    }, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 class CacheManager:
     """缓存管理器"""
@@ -134,8 +144,8 @@ class CacheManager:
     def _cleanup_cache_dict(cls, cache_dict: Dict, max_size: int):
         """清理缓存字典"""
         if len(cache_dict) > max_size:
-            # 移除一半的最旧条目
-            keys_to_remove = list(cache_dict.keys())[: -max_size // 2]
+            # 移除超出上限的最旧条目，保留配置允许的条数。
+            keys_to_remove = list(cache_dict.keys())[:len(cache_dict) - max_size]
             for key in keys_to_remove:
                 del cache_dict[key]
 

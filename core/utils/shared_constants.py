@@ -36,6 +36,3 @@ PHOTO_NO_PHONE_PROMPT = (
     "(visible phone:1.5), (phone in hand:1.6), (holding phone:1.6), "
     "(camera in hand:1.5), (selfie:1.6), (selfie stick:1.6), (taking selfie:1.6)"
 )
-
-# 向后兼容别名
-ANTI_DUAL_HANDS_PROMPT = f"{SELFIE_HAND_NEGATIVE}, {ANTI_DUAL_PHONE_PROMPT}"

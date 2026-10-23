@@ -23,7 +23,8 @@ logger = logging.getLogger("plugin.mais_art_journal.step.img2img_fallback")
 class DetectImg2ImgFallback(BaseStep):
     async def run(self, req: "GenerationRequest", ctx: "PipelineContext") -> Optional[StepResult]:
         if req.input_image_base64 and req.resolved_model_config:
-            if not req.resolved_model_config.get("support_img2img", True):
+            # 砂糖云客户端只有文生图协议，声明支持参考图也不能使它实际消费源图。
+            if req.api_format == "shatangyun" or not req.resolved_model_config.get("support_img2img", True):
                 logger.warning(f"{req.log_prefix} 模型 {req.model_id} 不支持图生图，转为文生图")
                 if not req.silent_img2img_fallback and req.stream_id:
                     try:

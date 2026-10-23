@@ -1,9 +1,6 @@
-"""运行时状态子系统
+"""由插件实例持有的会话设置，按真实 session_id 持久化覆盖项。"""
 
-按聊天流隔离的内存状态：插件开关、模型禁用集合、撤回开关、默认模型、自拍配置覆盖。
-重启后归零，长时间不活跃自动清理。
-"""
+from .runtime_state import RuntimeStateManager, StatePersistenceError
+from .proactive_state import ProactiveStateStore
 
-from .runtime_state import RuntimeStateManager, runtime_state
-
-__all__ = ["RuntimeStateManager", "runtime_state"]
+__all__ = ["ProactiveStateStore", "RuntimeStateManager", "StatePersistenceError"]

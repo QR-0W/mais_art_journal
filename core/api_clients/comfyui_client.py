@@ -43,7 +43,7 @@ class ComfyUIClient(BaseApiClient):
     format_name = "comfyui"
 
     def _build_opener(self) -> Tuple[urllib.request.OpenerDirector, int]:
-        """构建 opener（支持代理），返回 (opener, timeout)"""
+        """构建 opener（支持代理），返回 (opener, wait_seconds)。"""
         proxy_config = self._get_proxy_config()
         if proxy_config:
             proxy_handler = urllib.request.ProxyHandler({
@@ -51,11 +51,15 @@ class ComfyUIClient(BaseApiClient):
                 'https': proxy_config['https']
             })
             opener = urllib.request.build_opener(proxy_handler)
-            timeout = proxy_config.get('timeout', 120)
         else:
             opener = urllib.request.build_opener()
-            timeout = 120
-        return opener, timeout
+        # ComfyUI 的生成等待与代理连接超时是两套不同的语义。代理关闭时也
+        # 必须能够配置长工作流的轮询时间，不能再从 proxy.timeout 读取。
+        try:
+            wait_seconds = int(self.ctx.get_config("comfyui.wait_seconds", 600) or 600)
+        except (TypeError, ValueError):
+            wait_seconds = 600
+        return opener, max(1, wait_seconds)
 
     def _get_client_id(self) -> str:
         """返回本机器人提交到 ComfyUI 时的归属标识（用于队列去重）"""
@@ -160,6 +164,9 @@ class ComfyUIClient(BaseApiClient):
                 workflow_template = f.read()
         except Exception as e:
             return False, f"读取工作流文件失败: {e}"
+
+        if input_image_base64 and '"${image}"' not in workflow_template:
+            return False, "ComfyUI 参考图未使用：工作流需包含 ${image} 占位符，或将 support_img2img 设为 false"
 
         # ---- 1.5 提交前去重检查（提前到上传之前，避免排队时白白上传图片）----
         # 若队列中已有本机器人正在排队/运行的任务，说明上一次任务还没轮到，
@@ -286,7 +293,7 @@ class ComfyUIClient(BaseApiClient):
             logger.error(f"{self.log_prefix} (ComfyUI) 提交任务异常: {e}")
         return None
 
-    def _poll_history_sync(self, base_url: str, prompt_id: str, opener: urllib.request.OpenerDirector, timeout: int = 120) -> Optional[str]:
+    def _poll_history_sync(self, base_url: str, prompt_id: str, opener: urllib.request.OpenerDirector, timeout: int = 600) -> Optional[str]:
         """同步轮询 ComfyUI history，等待任务完成并返回输出图片文件名"""
         url = f"{base_url}/history/{prompt_id}"
         start = time.time()

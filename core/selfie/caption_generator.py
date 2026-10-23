@@ -7,17 +7,20 @@
 - 生成失败返回空字符串，由调用方决定是否发布
 
 字段对齐说明：
-    与 autonomous_planning_plugin v4 的 ``_prefetch_bot_profile`` 字段集保持一致
+    使用 MaiBot 的人设配置字段
     （personality / reply_style / interest / bot_name），并保留本插件特色的
     ``multiple_reply_style`` + ``multiple_probability`` 随机替换。
 """
 
-import datetime
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+import asyncio
+import json
 import logging
 import random
-from typing import TYPE_CHECKING, Dict
 
 from .schedule_provider import ActivityInfo
+from ..prompts.prompt_templates import load_prompt_template
 
 if TYPE_CHECKING:
     from maibot_sdk.context import PluginContext
@@ -48,7 +51,7 @@ async def _get_reply_style(ctx: "PluginContext") -> str:
 async def _get_bot_profile(ctx: "PluginContext") -> Dict[str, str]:
     """统一拉取 bot 完整人设字段
 
-    对齐 autonomous_planning_plugin v4 ``_prefetch_bot_profile``：
+    使用 Host 配置能力读取：
         ``bot.nickname`` / ``personality.personality`` / ``personality.interest`` /
         ``personality.reply_style``（含 multiple_reply_style 随机）。
 
@@ -74,50 +77,27 @@ async def _get_bot_profile(ctx: "PluginContext") -> Dict[str, str]:
 def _build_caption_prompt(
     activity_info: ActivityInfo,
     bot_profile: Dict[str, str],
-) -> str:
-    """构建配文生成 prompt（覆盖 bot 昵称/人设/兴趣/表达风格四元组）"""
-    now = datetime.datetime.now()
-    time_str = now.strftime("%H:%M")
-
-    bot_name = bot_profile.get("bot_name", "").strip() or "麦麦"
-    personality = bot_profile.get("personality", "").strip() or "一个有趣的人"
-    reply_style = bot_profile.get("reply_style", "").strip() or "自然亲切"
-    interest = bot_profile.get("interest", "").strip()
-
-    self_intro_lines = [
-        f"你是 {bot_name}。",
-        f"你的人设：{personality}",
+    *, destination: str = "qzone", group_context: Optional[List[Dict[str, str]]] = None,
+    outfit: str = "", photo_plan: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
+    """角色资料和群语境放入独立数据消息，避免它们改写配文规则。"""
+    return [
+        {"role": "system", "content": load_prompt_template("selfie_caption")},
+        {"role": "user", "content": json.dumps({
+            "persona": bot_profile, "activity": activity_info.to_payload(), "destination": destination,
+            "group_messages": group_context or [], "photo_outfit": outfit or activity_info.outfit,
+            "photo_plan": photo_plan or {},
+        }, ensure_ascii=False)},
     ]
-    if interest:
-        self_intro_lines.append(f"你的兴趣偏好：{interest}")
-    self_intro_lines.append(f"你的说话风格：{reply_style}")
-    self_intro = "\n".join(self_intro_lines)
-
-    prompt = f"""{self_intro}
-
-现在是{time_str}，你当前的状态：{activity_info.description}
-
-你刚拍了一张自拍，准备发到社交媒体上，请写一段配文。
-
-要求：
-1. 用你自己的口吻和说话习惯来写，保持你平时的语气
-2. 配文应该和你当前正在做的事有关联
-3. 可以适当结合你的兴趣偏好（如果合适的话），让配文更有"你"的味道
-4. 简短自然，像平时发朋友圈/说说一样（15-50字）
-5. 可以适当用语气词、颜文字，但不要刻意堆砌
-6. 不要用 hashtag、不要 @ 任何人
-7. 不要在配文里自报姓名（"我是XXX"这种），昵称只是你自我认知的一部分
-8. 只输出配文内容，不要输出其他任何东西
-
-配文："""
-
-    return prompt
 
 
 async def generate_caption(
     ctx: "PluginContext",
     activity_info: ActivityInfo,
     llm_task: str = "utils",
+    timeout_seconds: float = 45,
+    *, destination: str = "qzone", group_context: Optional[List[Dict[str, str]]] = None,
+    outfit: str = "", photo_plan: Optional[Dict[str, str]] = None,
 ) -> str:
     """为自拍生成配文
 
@@ -135,13 +115,18 @@ async def generate_caption(
     bot_profile = await _get_bot_profile(ctx)
 
     try:
-        prompt = _build_caption_prompt(activity_info, bot_profile)
+        prompt = await asyncio.to_thread(
+            _build_caption_prompt,
+            activity_info, bot_profile, destination=destination, group_context=group_context,
+            outfit=outfit, photo_plan=photo_plan,
+        )
 
         result = await ctx.llm.generate(
             prompt=prompt,
             model=llm_task,
             temperature=0.85,
-            max_tokens=8192,
+            max_tokens=512,
+            timeout_ms=int(timeout_seconds * 1000),
         )
 
         success = False

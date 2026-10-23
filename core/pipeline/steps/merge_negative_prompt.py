@@ -1,7 +1,6 @@
 """Step: 合并额外负面提示词
 
-- 优先使用 extra_negative_prompt（外部传入）
-- 否则使用自拍模式产生的 selfie_negative_prompt
+- 外部 extra_negative_prompt 与自拍模式产生的 selfie_negative_prompt 一起保留
 - 合并到 model_config 的 negative_prompt_add
 """
 from __future__ import annotations
@@ -25,7 +24,7 @@ class MergeNegativePrompt(BaseStep):
         if not req.resolved_model_config:
             return None
 
-        extra = req.extra_negative_prompt or req.selfie_negative_prompt
+        extra = ", ".join(part for part in (req.extra_negative_prompt, req.selfie_negative_prompt) if part)
         if not extra:
             return None
 

@@ -2,8 +2,9 @@
 
 提供统一的图片尺寸解析、验证和转换功能，供各API客户端复用
 """
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
+
 import logging
-from typing import TYPE_CHECKING, Tuple, Optional, Dict
 
 if TYPE_CHECKING:
     from maibot_sdk.context import PluginContext
@@ -43,6 +44,7 @@ async def select_size_with_llm(
     description: str,
     log_prefix: str = "",
     llm_task: str = "utils",
+    timeout_seconds: float = 45,
 ) -> Optional[str]:
     """使用 LLM 选择合适的图片尺寸
 
@@ -68,6 +70,7 @@ async def select_size_with_llm(
             model=llm_task,
             temperature=0.3,
             max_tokens=64,
+            timeout_ms=int(timeout_seconds * 1000),
         )
 
         response = ""
@@ -133,6 +136,7 @@ async def get_image_size_async(
     log_prefix: str = "",
     ctx: "PluginContext | None" = None,
     llm_task: str = "utils",
+    timeout_seconds: float = 45,
 ) -> Tuple[str, Optional[str]]:
     """异步版本的图片尺寸获取逻辑
 
@@ -161,7 +165,7 @@ async def get_image_size_async(
         if default_size.startswith("-") and description and ctx is not None:
             if log_prefix:
                 logger.info(f"{log_prefix} 使用固定分辨率配置，LLM 选择宽高比")
-            selected_size = await select_size_with_llm(ctx, description, log_prefix, llm_task=llm_task)
+            selected_size = await select_size_with_llm(ctx, description, log_prefix, llm_task=llm_task, timeout_seconds=timeout_seconds)
             return default_size, selected_size
 
         # 使用配置文件的固定尺寸
@@ -176,7 +180,7 @@ async def get_image_size_async(
 
     # 没有预设尺寸，调用 LLM 选择（Command 组件）
     if description and ctx is not None:
-        selected_size = await select_size_with_llm(ctx, description, log_prefix, llm_task=llm_task)
+        selected_size = await select_size_with_llm(ctx, description, log_prefix, llm_task=llm_task, timeout_seconds=timeout_seconds)
         if selected_size:
             return selected_size, selected_size
 

@@ -1,20 +1,17 @@
 # 麦麦绘卷 (Claude MAInet) - 智能多模型图片生成插件
 
-基于 MaiBot SDK 2.x 的智能多模型图片生成插件，支持文生图和图生图自动识别。兼容 OpenAI、OpenAI-Chat、豆包（火山方舟）、Gemini、魔搭、硅基流动、砂糖云、梦羽、智谱 GLM、阿里百炼 DashScope（通义千问/万相/Z-Image/可灵）、ComfyUI 等多种 API 格式。提供命令式风格转换、自拍模式、自动自拍发说说、日程感知、模型配置管理、运行时聊天流隔离状态、对外 @API 生图接口等功能。
+基于 MaiBot 的智能多模型图片生成插件，支持文生图和图生图自动识别。兼容原生 NovelAI、OpenAI、OpenAI-Chat、豆包（火山方舟）、Gemini、魔搭、硅基流动、砂糖云、梦羽、智谱 GLM、阿里百炼 DashScope（通义千问/万相/Z-Image/可灵）、ComfyUI 等多种 API 格式。提供日程自拍、群聊主动图片、聊天设置持久化、群/私聊额度管理、对外生图 API 等功能，与 MaiTrace 双向配合。
 
 ## ✨ 主要特性
 
 ### 🎯 智能图片生成
+
 - **文生图**: 根据对话内容自动生成图片
 - **图生图**: 检测到消息中有图片时自动使用图生图模式
-- **自拍模式**: 支持 standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片）三种风格
-  - 优化的提示词权重，确保手机不在画面中（standard/photo）或仅在镜子中可见（mirror）
-  - 优先使用 LLM 生成风格感知的手部动作，失败时回退到风格专属动作池
-  - 支持日程活动增强场景（需 autonomous_planning 插件）
-  - 可配置参考图进行图生图
-- **提示词优化**: 自动将中文描述优化为专业英文 SD 提示词（自拍模式仅优化场景，不干扰角色外观）
+- **自拍模式**: 支持 auto（按活动）/ standard（前置自拍）/ mirror（对镜自拍）/ photo（第三人称照片），共用角色形象与可选参考图
+- **提示词优化**: 普通图与自拍均按后端选择自然语言或标签，保留主体数量、布局、画面文字、画风及图生图编辑要求；自拍保持角色身份并按活动换装
 - **结果缓存**: 相同参数复用之前的结果
-- **自动撤回**: 可按模型配置延时撤回（使用 NapCat 官方 API）
+- **自动撤回**: 可按模型配置延时撤回，支持 SnowLuma／NapCat；现有 QQ 官方适配器未开放撤回 API，自动跳过
 
 ### 🎨/dr 命令系统
 
@@ -41,52 +38,35 @@
 | `/dr list` | 列出所有模型 |
 | `/dr config` | 显示当前聊天流配置 |
 | `/dr set <模型ID>` | 设置 /dr 命令使用的模型 |
-| `/dr default <模型ID>` | 设置智能生图 Tool 默认模型（当前聊天流，覆盖上述自动选择） |
+| `/dr default <模型ID>` | 设置智能生图 Tool 默认模型（当前聊天流，优先于场景自动选择） |
 | `/dr model on\|off <模型ID>` | 开关指定模型 |
 | `/dr recall on\|off <模型ID>` | 开关指定模型的撤回 |
 | `/dr on` / `/dr off` | 开关插件（当前聊天流） |
 | `/dr selfie on\|off` | 开关自拍日程增强（当前聊天流） |
-| `/dr selfie standard\|mirror\|photo` | 切换自拍风格（当前聊天流） |
+| `/dr selfie auto\|standard\|mirror\|photo` | 切换自拍风格（当前聊天流） |
 | `/dr reset` | 重置当前聊天流的所有运行时配置 |
 
-> 运行时配置（模型切换、开关等）仅保存在内存中，重启后恢复为 config.toml 的全局设置。
+> 模型切换、插件/模型/撤回开关、自拍日程开关和自拍风格按宿主真实聊天流保存，重启后继续生效。没有设置覆盖的聊天流跟随全局配置；`/dr reset` 只清除当前聊天流的设置覆盖，不重置生图额度。
 
-### 文生图 / 图生图 / 自拍的模型自动选择
+#### 聊天生图额度
 
-当 LLM 调用智能生图 Tool 且**未显式指定 `model_id`** 时，插件按场景自动选模型，回退顺序如下：
+| 命令 | 说明 |
+|------|------|
+| `/dr quota` 或 `/dr 额度` | 查看当前群共享额度或私聊个人额度 |
+| `/dr quota adjust +5 [原因]` | 管理员增加本周期额度；负数为减少 |
+| `/dr quota pending [页码]` | 管理员查看投递结果待核对的记录 |
+| `/dr quota resolve <记录ID> sent [原因]` | 管理员确认这张图已经送达 |
+| `/dr quota resolve <记录ID> refund [原因]` | 管理员确认未送达并退回原周期额度 |
 
-| 优先级 | 场景 | 使用的模型 |
-|--------|------|-----------|
-| 1 | 自动自拍（后台定时任务） | `selfie.selfie_model` |
-| 2 | 普通自拍（聊天里要自拍） | `selfie.llm_selfie_model`（留空→下一行） |
-| 3 | 图生图（消息附图 / 引用图片 / 自拍参考图） | `basic.default_img2img_model`（留空→下一行） |
-| 4 | 兜底（纯文生图） | `basic.default_txt2img_model` |
+额度默认关闭。启用后，用户发起的智能 Tool、风格命令和自然语言命令共用一套额度；同一群内所有用户共享，私聊按用户单独计算。每张成功发送的图片（含缓存图片）计一次，管理员也照常计数。
 
-**典型用法**：文生图模型和图生图模型分开填——`default_txt2img_model` 填文生图专用模型，`default_img2img_model` 填图生图专用模型。这样自然语言画图、改图、自拍三条路自动走对模型，LLM 完全无感。普通自拍必然携带 `reference_image_path` 指定的参考图，所以即使 `llm_selfie_model` 留空也会落到第 3 行的图生图模型，不会错误地用文生图模型画自拍。
+### 自动自拍与群聊主动图片
 
-> 旧配置里的 `default_model` 无需手工改动：解析时会把它作为「默认文生图模型」的回退源继续生效（见 `resolve_txt2img_model`），字段值本身不会被搬走。
-> 若某模型实际不支持图生图（模型配置里 `support_img2img = false`），即使被选为图生图默认也会自动降级为文生图，不会报错。
+根据 MaiTrace 当前日程、生活状态、人设和群话题，决定分享自拍到 QQ 空间、一个允许群，或跳过本轮。
 
-### 自动自拍
-
-定时生成自拍图片并发布到 QQ 空间说说。
-
-### 推荐周边插件（依赖）
-
-| 插件 | 作用 | 必需？ |
-|---|---|---|
-| [`MaiTrace`](https://github.com/Rabbit-Jia-Er/MaiTrace)（麦时迹） | QQ 空间自动化插件，提供发说说、刷空间、写日记等功能。自动自拍功能需要它来发布到 QQ 空间 | 否（不装时自动自拍不会发布到空间） |
-| [`xuqian13_autonomous-planning-plugin-v4`](https://github.com/xuqian13/autonomous_planning_plugin) | 日程规划插件，提供当前活动数据。自动自拍会根据日程生成场景 | 否（不装时自动自拍场景为"无活动"） |
-
----
-
-**特性**:
-- 可配置间隔（默认 2 小时）
-- 安静时段控制（默认 00:00-07:00 不发）
-- LLM 根据日程活动描述生成风格感知的英文 SD 场景标签（动作/环境/表情/光线），自动适配 standard/mirror/photo 的物理约束，LLM 失败则跳过本次自拍
-- 支持参考图片进行图生图自拍（可配置 `selfie.reference_image_path`，模型不支持时自动回退文生图）
-- 配文基于日程活动 + MaiBot 人设 + 表达风格自然生成，生成失败则跳过不发
-- 连续失败指数退避，避免频繁请求，无日程数据时自动跳过，不会发空内容
+- 自动自拍默认每 20 分钟判断一次，发布冷却 2 小时，00:00–07:00 静默；群话题图片另有概率和冷却设置
+- 自拍由 LLM 一次生成场景、服装与构图，配文依据实际生成方案与人设；群自拍一次发送图文，生成或配文失败则跳过
+- 判断不发不占发布冷却；临发送重新查日程，活动、地点、服装或生活场景变化时丢弃结果，连续失败会延长重试间隔
 
 ---
 
@@ -101,6 +81,7 @@
 | `modelscope` | 魔搭社区 | 异步任务模式，自动轮询结果 |
 | `dashscope` | 阿里百炼 DashScope | 支持通义千问/万相/Z-Image/可灵等模型 |
 | `shatangyun` | 砂糖云 (NovelAI) | GET 请求，URL 参数传递 |
+| `novelai` | 原生 NovelAI | 官方 `/ai/generate-image`，V3/V4/V4.5/V5，单图文生图和单张参考图的图生图 |
 | `mengyuai` | 梦羽 AI | 支持图生图（默认走 Qwen Image Edit，可通过 `img2img_model_index` 切换） |
 | `comfyui` | 本地 ComfyUI | 加载工作流 JSON，替换占位符，轮询结果（支持代理配置） |
 
@@ -108,222 +89,275 @@
 
 ## 🚀 快速开始
 
-## 安装插件
-  - 使用命令行工具或是 git base 进入你的麦麦目录
+1. 使用终端或 Git Bash 进入 MaiBot 的插件目录：
 
    ```shell
    cd MaiBot/plugins
    ```
 
-  - 克隆本仓库
+2. 克隆本仓库，指定目录名为 `mais_art_journal`：
 
    ```shell
-   git clone https://github.com/1021143806/mais-art-journal.git
+   git clone https://github.com/1021143806/mais-art-journal.git mais_art_journal
    ```
 
-  - 重启 maibot 后你会看到在当前插件文件夹 `MaiBot/plugins/mais_art_journal`中生成了一个配置文件 `config.toml`
-  - 按照配置文件中的说明填写必要参数后重启 MaiBot 即可让你的麦麦学会不同画风的画画（如何申请 key 请自行前往对应平台官网查看 api 文档）
+3. 在 MaiBot 使用的 Python 环境中安装插件依赖：
+
+   ```shell
+   uv pip install -r mais_art_journal/requirements.txt
+   ```
+
+4. 重启 MaiBot，插件会在 `MaiBot/plugins/mais_art_journal/` 生成 `config.toml`。
+5. 按下方说明配置生图模型和辅助 LLM，重启 MaiBot 后用 `/dr 画一只猫` 验证。API Key 从对应服务商申请（如何申请 key 请自行前往对应平台官网查看 api 文档）
 
 ## 配置说明
 
-配置文件: `config.toml`，首次启动自动生成。版本更新时自动备份到 `old/` 目录。
+首次启动自动生成 `config.toml`，可在 WebUI 修改配置并查看各字段说明。下面只列常用设置；升级时原配置会备份到 `old/`。各 TOML 示例对应文件中的不同段，修改已有段即可；新增模型才追加 `[[models.items]]`。
 
 ### 基础设置
 
 ```toml
 [plugin]
 enabled = true                    # 启用插件
-config_version = "4.2.0"          # 主程序版本识别，请勿改
+config_version = "4.6.2"          # 插件配置版本，自动维护，请勿改
 
 [basic]
 command_prefix = "/dr"            # 命令前缀，可改 /dv、/draw 等，必须以 / 开头
 default_txt2img_model = "model1"  # 默认文生图模型 ID（纯文生图时使用）
-default_img2img_model = "model2"  # 默认图生图模型 ID（消息附图/引用图片时使用，留空=与文生图相同）
+default_img2img_model = ""        # 默认图生图模型 ID；配置了第二个模型后可填 model2，留空沿用文生图模型
 enable_unified_generation = true  # 启用智能生图 Tool（draw_picture）
 enable_pic_command = true         # 启用 /dr 图片生成命令
-enable_pic_config = true          # 启用 /dr 配置管理命令
-enable_pic_style = true           # 启用 /dr 风格管理命令
 pic_command_model = "model1"      # /dr 命令默认模型（可通过 /dr set 动态切换）
-admin_users = ["12345"]           # 管理员 QQ 号列表（字符串格式）
+admin_users = ["12345"]           # 管理员实际用户 ID 列表（字符串；官方适配器按绑定情况填写 OpenID 或 QQ 号）
 max_retries = 2                   # API 失败重试次数
 enable_debug_info = false         # 在聊天中显示生成进度等调试信息
-enable_verbose_debug = false      # 打印完整 API 请求/响应到日志
+enable_verbose_debug = false      # OpenAI/OpenAI-Chat/DashScope 的详细请求/响应日志
 cache_enabled = true              # 启用结果缓存
-cache_max_size = 10               # 最大缓存数量
+cache_max_size = 10               # 文生图和图生图各自的内存缓存条数上限，重启清空
 auto_recall_enabled = false       # 自动撤回总开关（还需在模型配置里设 auto_recall_delay > 0）
-prompt_optimizer_enabled = true   # 使用 MaiBot LLM 优化提示词
+prompt_optimizer_enabled = true   # 普通图/自拍场景优化；关闭后发布判断、尺寸选择、配文仍可用 LLM
 llm_task_name = "utils"           # 辅助 LLM 任务名：utils / replyer / planner / memory / learner
+llm_timeout_seconds = 45          # 辅助 LLM 每次调用超时（秒），包含主动判断
+generation_timeout_seconds = 170 # 普通后端完整生成总超时；ComfyUI 另按等待时间预留
+proactive_min_energy = 30         # 所有主动图的最低精力，MaiTrace 生活状态使用 0-100
 ```
 
-### 自拍配置（合并了"自拍模式 + 自动自拍"）
+### 生图模型配置
 
-```toml
-[selfie]
-enabled = true                    # 启用自拍模式
-reference_image_path = ""         # 参考图路径（留空=纯文生图，配置后自动图生图）
-prompt_prefix = "blue hair, red eyes, 1girl"  # Bot 外观描述
-negative_prompt = ""              # 额外负面提示词（自动附加手部质量负面提示词）
-schedule_enabled = true           # 日程增强（需 autonomous_planning），可通过 /dr selfie on|off 按聊天流覆盖
-default_style = "standard"        # 默认风格: standard / mirror / photo，可通过 /dr selfie standard|mirror|photo 按聊天流覆盖
-llm_selfie_model = "model2"       # 普通自拍（聊天里要自拍）模型 ID；自拍必然带参考图走图生图，留空=用默认图生图模型
-
-# 以下 auto_ 前缀字段属于自动自拍
-auto_enabled = false              # 启用自动自拍（需 MaiTrace + autonomous_planning）
-interval_minutes = 120            # 自拍间隔（分钟）
-selfie_model = "model1"           # 自动自拍使用的模型 ID
-quiet_hours_start = "00:00"       # 安静时段开始（HH:MM），此时段不发自拍
-quiet_hours_end = "07:00"         # 安静时段结束
-caption_enabled = true            # 是否生成配文
-```
-
-### 代理设置
-
-```toml
-[proxy]
-enabled = false                   # 启用代理（所有 API 请求经代理）
-url = "http://127.0.0.1:7890"     # 支持 HTTP / HTTPS / SOCKS5
-timeout = 60                      # 代理连接超时（秒）
-```
-
-### 风格配置（数组结构，可在 WebUI 增删）
-
-```toml
-[[styles.items]]
-name = "cartoon"                  # 英文名（命令引用，不可重复）
-aliases = "卡通,动漫"              # 中文别名，逗号分隔，可留空
-prompt = "cartoon style, anime style, colorful, vibrant colors, clean lines"
-
-[[styles.items]]
-name = "watercolor"
-aliases = "水彩"
-prompt = "watercolor painting style, soft colors, artistic"
-```
-
-### 模型配置（数组结构，可在 WebUI 增删）
+在 WebUI 的「模型管理 → 模型列表」增删模型，或在插件 `config.toml` 中编辑 `[[models.items]]`。每项独立配置服务地址、密钥和型号。下面以硅基流动的文生图配置为例，`model` 须使用账号当前可用的生图型号：
 
 ```toml
 [[models.items]]
-id = "model1"                                    # 唯一标识（命令引用，不可重复）
-name = "我的模型"                                 # 显示名称
-base_url = "https://api.siliconflow.cn/v1"       # API 地址
-api_key = "Bearer sk-xxx"                        # API 密钥（统一 'Bearer xxx' 格式）
-format = "openai"                                # API 格式，见上方"支持的 API 格式"表
-model = "Kwai-Kolors/Kolors"                     # 模型标识
-fixed_size_enabled = false                       # 固定尺寸（关闭=LLM 自动选）
-default_size = "1024x1024"                       # 默认尺寸
-seed = -1                                        # 随机种子（-1=随机）
-guidance_scale = 2.5                             # 引导强度（CFG）；填 -1 = 不发送该参数（模型不支持时用）
-num_inference_steps = 20                         # 推理步数
-watermark = false                                # 是否加水印（豆包等支持）
-custom_prompt_add = ", best quality"             # 追加正面提示词
-negative_prompt_add = "lowres, bad anatomy"      # 追加负面提示词
-support_img2img = true                           # 是否支持图生图（按平台文档自行判断）
-auto_recall_delay = 0                            # 自动撤回延时（秒），0=不撤回
-
-# 砂糖云（shatangyun）专用：
-# artist = ""
-# cfg = 0.0                       # CFG Rescale (0.0-1.0)
-# sampler = "k_euler_ancestral"
-# nocache = 0
-# noise_schedule = "karras"
-
-# DashScope（阿里百炼）专用：
-# endpoint_path = ""              # 留空走多模态默认；万相 2.5 i2i / 可灵需指定
-# dashscope_async = false         # 异步模式
-# prompt_extend = true            # 智能扩写
-
-# 梦羽 AI 专用：
-# img2img_model_index = 19        # 图生图模型 index，默认 19 (Qwen Image Edit)
+id = "model1"                    # 插件内的唯一 ID，默认模型和命令引用它
+name = "硅基流动文生图"            # 显示名称
+format = "openai"                # 按实际接口协议选择，见上方 API 格式表
+base_url = "https://api.siliconflow.cn/v1"
+api_key = "Bearer YOUR_API_KEY_HERE"
+model = "Kwai-Kolors/Kolors"      # 服务端型号，与本地 id 不同
+fixed_size_enabled = true        # 固定尺寸，避免自动选择服务不支持的尺寸
+default_size = "1024x1024"
+seed = -1                        # 随机种子
+guidance_scale = 2.5
+num_inference_steps = 20
+custom_prompt_add = ""           # 留空表示不追加固定画风
+negative_prompt_add = "lowres, bad anatomy"
+prompt_syntax = "tags"           # OpenAI 兼容扩散模型可显式使用标签语法
+support_img2img = false          # 此例用于文生图，图生图需服务实际支持
+auto_recall_delay = 0            # 0 不撤回；启用还需 basic.auto_recall_enabled
 ```
 
-新增模型：复制整个 `[[models.items]]` 块，把 `id` 改成 `model2` / `model3` 等。
+新增模型时复制整项，把 `id` 改为 `model2`、`model3` 等，再填写该模型的连接参数。`basic`、`selfie` 和 `group_image` 中的模型选择字段都填这里的 `id`；修改 `name` 或 `model` 不会切换 API 协议。
 
-### ComfyUI 支持
+| 参数 | 填写说明 |
+| --- | --- |
+| `base_url` | `openai` / `openai-chat` 通常填带 `/v1` 的 API 基址；Gemini 填服务根地址，客户端会追加 `/v1beta/models/...:generateContent`；DashScope 填根地址，如 `https://dashscope.aliyuncs.com` |
+| `api_key` | `openai` / `openai-chat` 原样发送 Authorization，应填 `Bearer token`；其他云后端支持裸 token 或 `Bearer token`，ComfyUI 可留空 |
+| `fixed_size_enabled` / `default_size` | 开启固定尺寸时使用 `default_size`；关闭时优先本次请求尺寸，再由辅助 LLM 选择，失败使用默认值。尺寸须符合具体服务和型号要求 |
+| `guidance_scale` / `num_inference_steps` | 扩散模型的引导强度 / 步数；OpenAI 兼容接口可填 `-1` 省略。其他后端是否使用或允许省略见 WebUI 字段说明；NovelAI 步数 1–50、引导强度 0.1–20 |
+| `watermark` | 豆包、DashScope 及 OpenAI 格式连接火山方舟时使用的水印开关；其他客户端不发送，不能去除服务强制水印 |
+| `custom_prompt_add` / `negative_prompt_add` | 所有请求共用的正面增强词 / 负面词；更换后端时同时检查，避免沿用默认模型的画风。正面词直接拼接，建议带逗号或空格；负面词按后端能力处理 |
+| `prompt_syntax` | `auto`：魔搭、砂糖云、梦羽、NovelAI、ComfyUI 用标签，OpenAI、OpenAI-Chat、Gemini、豆包、DashScope 用自然语言；`natural` / `tags` 可显式指定 |
+| `support_img2img` | 仅声明参考图能力，不能给服务增加图生图支持；设为 `false` 时清除源图并使用同一模型文生图 |
+| `selfie_reference_strength` | 有参考图的自拍重绘强度，默认 0.6；用于 NovelAI、ComfyUI 和 `prompt_syntax = "tags"` 的 OpenAI 扩散网关，本次显式 `strength` 优先 |
 
-通过本地或远程 ComfyUI 实例的 HTTP API 生成图片。需先在 ComfyUI Web UI 中点击 **"保存(API格式)"** 导出工作流 JSON，放到插件 `workflow/` 目录下。
+部分后端还有专用字段：
 
-**基本配置：**
+| 后端 | 专用配置 |
+| --- | --- |
+| `shatangyun` | `artist`、`cfg`（CFG Rescale）、`sampler`、`noise_schedule`、`nocache`；当前客户端仅文生图，应设 `support_img2img = false`。`nocache` 不控制插件自身缓存 |
+| `mengyuai` | `model` 填文生图数字索引字符串，如 `"0"`；图生图用 `img2img_model_index`（默认 19）。`image_upload_url` 用于上传参考图取得公网 URL，留空尝试 data URI，服务可能不支持 |
+| `dashscope` | `endpoint_path` 留空使用多模态默认端点；万相 2.5 图生图填 `/api/v1/services/aigc/image2image/image-synthesis`，可灵填 `/api/v1/services/aigc/image-generation/generation`。这两类端点自动启用异步，其他端点按需设 `dashscope_async`；`prompt_extend` 控制服务端扩写 |
+
+#### 原生 NovelAI
+
+在模型列表新增一项，通用参数仍写在该项中，专属参数写在紧随其后的 `[models.items.novelai]`：
+
 ```toml
 [[models.items]]
-id = "model6"
-name = "ComfyUI-本地"
-base_url = "http://127.0.0.1:8188"  # ComfyUI 服务地址
-api_key = ""                         # 不需要，留空
-format = "comfyui"                   # 必须填 comfyui
-model = "my_workflow.json"           # 工作流文件名（相对 workflow/ 目录，也可填绝对路径）
-fixed_size_enabled = true            # 建议开启，尺寸通过占位符传入工作流
-default_size = "1024x1024"           # 通过 ${width}/${height} 传入工作流
-seed = -1                            # -1=每次随机，通过 ${seed} 传入
-guidance_scale = 8                   # 通过 ${cfg} 传入
-num_inference_steps = 30             # 通过 ${steps} 传入
-custom_prompt_add = ", masterpiece"  # 拼接到用户提示词末尾，通过 ${prompt} 传入
-negative_prompt_add = "lowres"       # 通过 ${negative_prompt} 传入
-support_img2img = false              # 需工作流中包含 ${image} 占位符
+id = "model2"
+name = "NovelAI V4.5"
+format = "novelai"
+base_url = "https://image.novelai.net"
+api_key = "YOUR_API_KEY_HERE"
+model = "nai-diffusion-4-5-full"
+fixed_size_enabled = true
+default_size = "832x1216"
+num_inference_steps = 28
+guidance_scale = 5.0
+custom_prompt_add = ""
+negative_prompt_add = "lowres, bad anatomy, bad hands"
+support_img2img = true
+
+[models.items.novelai]
+mode = "anime"                   # anime / furry；background 仅 V4.5/V5
+quality_tags = true
+smea = false                     # SMEA 仅支持 V3 文生图
+smea_dynamic = false             # 开启时还需 smea = true
+img2img_strength = 0.6           # 普通图生图强度；自拍用 selfie_reference_strength
+img2img_noise = 0.1
+request_timeout_seconds = 120
 ```
 
-**工作流占位符：**
+宽高须为 64–2048 之间的 64 倍数。支持的型号有 `nai-diffusion-3`、`nai-diffusion-furry-3`、`nai-diffusion-4-full`、`nai-diffusion-4-curated-preview`、`nai-diffusion-4-5-full`、`nai-diffusion-4-5-curated`、`nai-diffusion-5-full`、`nai-diffusion-5-curated`。V3 的 `mode` 须与 Anime/Furry 型号对应；V4+ 通过数据集标签切换模式。不支持的型号或参数组合会报错。
 
-在导出的 API 格式 JSON 中，将需要动态控制的字段值替换为占位符（带引号）：
+#### ComfyUI
 
-| 占位符 | 来源 | 工作流中的典型位置 |
-|--------|------|---------------------|
-| `"${prompt}"` | 用户提示词 + `custom_prompt_add` | CLIPTextEncode 节点的 `text` |
-| `"${seed}"` | `seed` 配置值 | KSampler 节点的 `seed` |
-| `"${negative_prompt}"` | `negative_prompt_add` | 负面 CLIPTextEncode 节点的 `text` |
-| `"${steps}"` | `num_inference_steps` | KSampler 节点的 `steps` |
-| `"${cfg}"` | `guidance_scale` | KSampler 节点的 `cfg` |
-| `"${width}"` | 从 `default_size` 解析 | EmptyLatentImage 节点的 `width` |
-| `"${height}"` | 从 `default_size` 解析 | EmptyLatentImage 节点的 `height` |
-| `"${denoise}"` | 图生图降噪强度 | KSampler 节点的 `denoise` |
-| `"${image}"` | 用户发送的图片（自动上传） | LoadImage 节点的 `image` |
+将工作流导出为 **API 格式 JSON** 放入插件 `workflow/`，再配置一项模型。工作流使用的模型文件和节点需已安装在 ComfyUI 实例中：
 
-**示例** — 工作流 JSON 片段：
-```json
-{
-  "3": {
-    "inputs": {
-      "seed": "${seed}",
-      "steps": "${steps}",
-      "cfg": "${cfg}",
-      "sampler_name": "dpmpp_2m",
-      "denoise": "${denoise}",
-      "model": ["4", 0],
-      "positive": ["6", 0],
-      "negative": ["7", 0],
-      "latent_image": ["5", 0]
-    },
-    "class_type": "KSampler"
-  },
-  "5": {
-    "inputs": {
-      "width": "${width}",
-      "height": "${height}",
-      "batch_size": 1
-    },
-    "class_type": "EmptyLatentImage"
-  },
-  "6": {
-    "inputs": {
-      "text": "${prompt}",
-      "clip": ["4", 1]
-    },
-    "class_type": "CLIPTextEncode"
-  },
-  "7": {
-    "inputs": {
-      "text": "${negative_prompt}",
-      "clip": ["4", 1]
-    },
-    "class_type": "CLIPTextEncode"
-  }
-}
+```toml
+[[models.items]]
+id = "model3"
+name = "ComfyUI 本地"
+format = "comfyui"
+base_url = "http://127.0.0.1:8188"
+api_key = ""
+model = "sdxl_txt2img_api.json"   # 相对 workflow/ 的文件名，也可填绝对路径
+fixed_size_enabled = true
+default_size = "1024x1024"
+guidance_scale = 7.0
+num_inference_steps = 30
+custom_prompt_add = ""
+negative_prompt_add = "lowres, bad anatomy"
+support_img2img = false          # 图生图请换用带 ${image} 的工作流并设为 true
+
+[comfyui]
+client_id = "maibot-hilda"        # 多机器人连同一实例时各用不同标识
+wait_seconds = 600               # 最长出图轮询时间（秒）
 ```
 
-> 不使用的占位符可以不写，对应字段会保持工作流中的原始值，完全向后兼容。
+工作流支持以下占位符，在 JSON 字段值中用带引号的字符串填写，例如 `"steps": "${steps}"`：
+
+| 占位符 | 内容 |
+| --- | --- |
+| `${prompt}` / `${negative_prompt}` | 正面 / 负面提示词 |
+| `${width}` / `${height}` | 图片宽高 |
+| `${seed}` / `${steps}` / `${cfg}` | 种子、步数、引导强度 |
+| `${image}` / `${denoise}` | 图生图源图、降噪强度 |
+
+图生图工作流必须包含 `${image}`；其余占位符按需使用。未替换的字段保留工作流原值。`comfyui.wait_seconds` 不受 `proxy.timeout` 控制，但仍受调用入口总时限限制：智能 Tool 为 660 秒、公开 API 为 180 秒，主动任务另有周期超时。
+
+### 辅助 LLM 配置
+
+生图服务与辅助 LLM 分别配置：
+
+| 用途 | 配置位置 | 引用方式 |
+| --- | --- | --- |
+| 生成图片 | 插件 `config.toml` 的 `[[models.items]]` | `basic.default_txt2img_model` 等字段填写本地 `id` |
+| 优化提示词、选择尺寸、自拍场景、主动发布判断和配文 | MaiBot 主程序 `config/model_config.toml` 的模型与任务配置 | 插件 `basic.llm_task_name` 填任务名，默认 `utils` |
+
+若主程序的 `utils` 已能正常调用文本模型，保持 `llm_task_name = "utils"` 即可。需要更换辅助模型时，在主程序已有的 `[model_task_config.utils]` 段中调整 `model_list`，其中每项对应主程序 `[[models]]` 的 `name`。该任务也供主程序其他功能使用：
+
+```toml
+# MaiBot/config/model_config.toml 中已有的任务段
+[model_task_config.utils]
+model_list = ["你的文本模型配置名"]
+```
+
+`llm_task_name` 填 `utils`、`replyer` 等主程序已配置的文本任务名；`selfie.llm_selfie_model` 则填生图模型 ID。辅助 LLM 建议选择能稳定遵循指令、输出 JSON 的文本模型。它使用主程序的服务商、密钥和代理配置，插件 `[proxy]` 控制绘卷自己的图片请求。
+
+关闭 `basic.prompt_optimizer_enabled` 会停用提示词与自拍场景的 LLM 优化，主动发布判断、自动尺寸选择和可选配文仍可能调用辅助 LLM。开启优化器时，优化失败会终止本次生成；`basic.llm_timeout_seconds` 控制单次辅助调用超时。
+
+### 各入口如何选择模型
+
+| 入口 | 选择顺序 |
+| --- | --- |
+| 智能生图 Tool（`draw_picture`） | 显式 `model_id` → 当前聊天 `/dr default` 覆盖 → 自拍时的 `selfie.llm_selfie_model` → 有参考图时的默认图生图模型 → 默认文生图模型 |
+| `/dr` 风格 / 自然语言命令 | 描述中显式指定的模型（自然语言命令）→ 当前聊天 `/dr set` 覆盖 → `basic.pic_command_model` |
+| 定时自动自拍 | `selfie.selfie_model` → `selfie.llm_selfie_model` → 按是否有共用参考图选择默认图生图 / 文生图模型 |
+| 群话题主动图片 | `group_image.model_id` → 角色照片沿用 `selfie.llm_selfie_model`，再按参考图选择默认模型；普通图片用默认文生图模型 |
+| 公开 `generate_image` API | 显式 `model_id` → 自拍时的 `selfie.llm_selfie_model` → 有参考图时的默认图生图模型 → 默认文生图模型 |
+
+默认图生图 / 文生图模型分别是 `basic.default_img2img_model` / `basic.default_txt2img_model`；图生图留空沿用文生图。留空才会顺延，填写了不存在的 ID 会报错。`/dr` 即使检测到图片，也仍使用命令模型；希望改图用另一个模型时，请显式指定或用 `/dr set` 切换。
+
+### 额度配置
+
+```toml
+[quota]
+enabled = false                  # 开启后限制人类发起的聊天生图
+period = "daily"                 # daily / weekly（周一）/ monthly / once
+timezone = "Asia/Shanghai"
+group_limit = 20                 # 每群每周期共享 20 张
+private_limit = 5                # 每个私聊用户每周期 5 张
+
+[[quota.rules]]                  # 可选：指定群或私聊用户覆盖默认值
+platform = "qq"
+target_type = "group"            # group / user（仅私聊）
+target_id = "123456"
+limit = 50                      # 0 表示禁止生图
+period = "weekly"               # 省略时使用全局周期
+```
+
+管理员调整只影响当前周期；周期重置后仍使用配置中的基础额度。`once` 不会自动重置，也不受时区变化影响。改变其他周期或时区会使用对应的新周期账本，尚未结算的记录保留在原周期。`/dr quota pending` 可查看历史周期的待核对记录。
+
+自动自拍、群聊主动图片和 MaiTrace 配图不扣聊天额度。发送失败且确认未投递时退还；发送结果未知时保留占用，由管理员用 `/dr quota pending` 和 `/dr quota resolve` 核对。
+
+### 自拍与主动图片
+
+| 配置 | 用途 |
+| --- | --- |
+| `selfie.enabled` | 所有自拍入口的总开关 |
+| `selfie.prompt_prefix` | 共用角色形象，填写发色、瞳色等固定外观 |
+| `selfie.reference_image_path` | 共用参考图，相对插件目录或绝对路径；留空使用文生图 |
+| `selfie.default_style` | `auto` / `standard` / `mirror` / `photo` |
+| `selfie.llm_selfie_model` | 普通自拍模型；留空按默认模型选择 |
+| `selfie.schedule_enabled` | 聊天自拍是否读取日程 |
+| `selfie.auto_enabled` | 定时自动自拍开关，默认关闭 |
+| `selfie.selfie_model` | 自动自拍模型；留空沿用普通自拍模型 |
+| `selfie.qzone_enabled` / `selfie.group_enabled` | 自动自拍允许发到空间 / 群 |
+| `selfie.check_interval_minutes` / `selfie.interval_minutes` | 自动自拍判断间隔 / 发布冷却，默认 20 / 120 分钟 |
+| `group_image.enabled` | 群话题主动生图开关，默认关闭 |
+| `group_image.platform` / `group_image.group_ids` | 主动发群使用的平台与允许群 ID 名单 |
+| `group_image.model_id` | 群话题图片使用的模型 |
+| `group_image.probability` / `group_image.cooldown_minutes` | 群话题生图概率 / 每群发布冷却 |
+
+自动自拍、聊天自拍和 MaiTrace 自拍共用形象与参考图；服装按活动调整。主动发图需要 MaiTrace 的有效日程，睡眠、低精力或静默时段会跳过。
+
+自动自拍发群与群话题图片共用群名单和群冷却；只发定时自拍时无需开启 `group_image.enabled`。空间发布需先在 MaiTrace 配好空间接口或 Cookie。关闭 `selfie.caption_enabled` 后，`selfie.caption_text` 必须填写固定配文。
+
+### QQ 适配器
+
+支持 QQ 官方、SnowLuma／NapCat，通过宿主统一收发。管理员、额度目标和允许群名单均填实际聊天 ID：官方适配器未绑定时用 OpenID，绑定后用 QQ 号／群号。自动撤回支持 SnowLuma／NapCat，官方消息会跳过。
+
+## 与 MaiTrace 配合
+
+[MaiTrace](https://github.com/Rabbit-Jia-Er/MaiTrace)（麦时迹）为主动发图提供当前日程，可选提供生活状态，并通过直发接口发布自拍到 QQ 空间。所有主动发图需要它提供有效日程；手动生图可独立使用。
+
+其他插件可通过公开 API 获取图片，自行决定如何发送：
+
+```python
+result = await ctx.call_capability(
+    "api.call", timeout_ms=185000,
+    api_name="1021143806.mais_art_journal.generate_image", version="1",
+    args={"prompt": "公园里的猫", "model_id": "model1"},
+)
+```
+
+返回 `success`、`image_base64`、`model_id`、`size`、`is_img2img`、`error`、`selfie_style` 和 `outfit`；图片为纯 base64。自拍传入 `selfie_mode=true`，可选传构图、活动和服装；模型列表接口为 `1021143806.mais_art_journal.list_image_models`。
 
 ## 💡 使用示例
 
 ### 自然语言生图（可以指定model1，model2 等，支持中文）
+
 ```
 用户：麦麦，画一张美少女
 麦麦：[生成图片]
@@ -334,12 +368,14 @@ support_img2img = false              # 需工作流中包含 ${image} 占位符
 ```
 
 ### 自拍模式
+
 ```
 用户：麦麦，来张自拍！
-麦麦：[生成Bot角色的自拍照片，包含随机手部动作]
+麦麦：[生成符合当前活动和服装要求的角色照片]
 ```
 
 ### 命令式风格转换（仅图生图）
+
 ```
 用户：[发送图片]
 用户：[回复 麦麦： [图片] ]，说：/dr cartoon
@@ -347,18 +383,19 @@ support_img2img = false              # 需工作流中包含 ${image} 占位符
 ```
 
 ### 命令式自然语言生成（文/图生图）
+
 ```
 用户：/dr 画一只可爱的猫
 麦麦：[文生图：生成新图片]
 
 用户：[发送图片]
-用户：[回复 麦麦： [图片] ]，说：麦麦，把这张图的背景换成海滩
+用户：[回复 麦麦： [图片] ]，说：/dr 把这张图的背景换成海滩
 麦麦：[图生图：基于输入图片生成]
 ```
 
 ## 🔧 依赖说明
 
-- 需 Python 3.12+
+- 插件需 Python 3.12+，同时遵循所用 MaiBot 版本的 Python 要求
 - 依赖 MaiBot 项目插件系统，目前改为一直支持最新版
 - MaiBot 项目地址：https://github.com/Mai-with-u/MaiBot
 - 如果使用豆包（火山方舟）API，需要安装豆包 SDK
@@ -370,26 +407,31 @@ support_img2img = false              # 需工作流中包含 ${image} 占位符
 
 ## ⚠️ 注意事项
 
-- 模型是否支持图生图请参考各平台官方文档（注：在`support_img2img = true` - 是否支持图生图中填写true/false，请自行判断）
 - 请妥善保管 API 密钥，不要在公开场合泄露，各平台 API 可能有调用频率限制，请注意控制使用频率，生成的图片内容受模型和提示词影响，请遵守相关平台的使用规范（注：梦羽AI和砂糖云支持NSFW，请自行判断）
 
 ## 常见问题
 
 - **API 密钥未配置/错误**：请检查 `config.toml` 中对应模型的 api_key 配置。
-- **图片尺寸无效**：支持如 `1024x1024`，宽高范围 100~10000。
+- **模型不存在 / 用错模型**：默认模型字段填写 `[[models.items]]` 的 `id`；`/dr set` 和 `/dr default` 分别控制命令与智能 Tool，已有聊天覆盖可用 `/dr reset` 清除。
+- **辅助 LLM 调用失败**：检查 `basic.llm_task_name` 对应的主程序模型任务是否可用，以及 `model_list`、服务商密钥与超时设置。
+- **图片尺寸无效**：按所用服务和型号选择像素尺寸或比例 / 分辨率；NovelAI 宽高须为 64–2048 的 64 倍数，其他后端也有各自限制。
 - **依赖缺失**：请确保 MaiBot 插件系统相关依赖已安装。
-- **api 调用报错**
-400：参数不正确，请参考报错信息（message）修正不合法的请求参数，可能为插件发送的报文不兼容对应 api 供应商；
-401：API Key 没有正确设置；
-403：权限不够，最常见的原因是该模型需要实名认证，其他情况参考报错信息（message）；
-429：触发了 rate limits；参考报错信息（message）判断触发的是 RPM /RPD / TPM / TPD / IPM / IPD 中的具体哪一种，可以参考 Rate Limits 了解具体的限流策略
-504 / 503：一般是服务系统负载比较高，可以稍后尝试；
+
+API 返回错误时，先查看日志中的服务端 `message`：
+
+| HTTP 状态 | 排查方向 |
+| --- | --- |
+| 400 | 检查接口协议、服务端型号、尺寸及该模型支持的参数 |
+| 401 | 检查 API Key 和对应后端要求的密钥格式 |
+| 403 | 检查模型访问权限、账号认证和服务端报错 |
+| 429 | 已触发服务商限流，按返回信息检查请求数、Token 或图片额度 |
+| 503 / 504 | 服务繁忙或超时，可稍后重试 |
 
 ## 贡献和反馈
 
-- **制作者水平有限，任何漏洞、疑问或建议,欢迎提交 Issue 和 Pull Request！**
-- **或联系QQ：1021143806,3082618311**
-- **其余问题请联系作者修复或解决（部分好友请求可能被过滤导致回复不及时，请见谅）**
+- **制作者水平有限，任何漏洞、疑问或建议,欢迎提交 [Issue](https://github.com/1021143806/mais-art-journal/issues) 或 Pull Request！**
+- **作者QQ：1021143806,3082618311或群1025591815（部分请求可能被过滤导致回复不及时，请见谅）**
+- **其余问题请联系作者修复或解决**
 
 ---
 
@@ -409,5 +451,5 @@ support_img2img = false              # 需工作流中包含 ${image} 占位符
 ## 🔗 版权信息
 
 - 作者：Ptrel, Rabbit-Jia-Er, saberlights Kiuon
-- 许可证：GPL-v3.0-or-later
+- 许可证：AGPL-3.0-or-later
 - 项目主页：https://github.com/1021143806/mais-art-journal

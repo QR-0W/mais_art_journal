@@ -9,6 +9,7 @@ from .model_registry import (
     resolve_txt2img_model,
 )
 from .models import (
+    ComfyUISection,
     MaisArtConfig,
     ModelConfig,
     ModelsSection,
@@ -19,6 +20,7 @@ from .style_registry import get_style_prompt, list_styles, resolve_style_alias
 
 __all__ = [
     "MaisArtConfig",
+    "ComfyUISection",
     "ModelConfig",
     "ModelsSection",
     "StylePreset",

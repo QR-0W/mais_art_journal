@@ -1,14 +1,15 @@
 """Step: 发送图片
 
 - send_image=False 时跳过（auto_selfie / standalone 用）
-- 记录 send_timestamp 供撤回调度使用
+- 记录 SDK 发送回执中的平台消息 ID，供撤回调度使用
 - debug 模式下补一句"完成"提示
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Optional
+
 import logging
 import time as time_module
-from typing import TYPE_CHECKING, Optional
 
 from ..result import StepResult
 from ..step import BaseStep
@@ -32,18 +33,24 @@ class SendImage(BaseStep):
             return StepResult.fail(error="缺少 stream_id", user_message=None)
 
         req.send_timestamp = time_module.time()
+        # SDK 返回前发生超时/取消，不能断言图片没有发出，更不能自动重发或退款。
+        req.delivery_state = "unknown"
         try:
             sent = await ctx.plugin.ctx.send.image(
                 req.resolved_image_data, req.stream_id,
+                return_details=True,
                 sync_to_maisaka_history=True,
                 maisaka_source_kind="plugin_send_image",
             )
         except Exception as e:
             logger.error(f"{req.log_prefix} 发送图片异常: {e!r}")
-            return StepResult.fail(error=f"发送图片异常: {e!r}", user_message="图片已处理完成，但发送失败了")
+            return StepResult.fail(error=f"发送图片结果未知: {e!r}", user_message="图片已生成，但发送结果未确认，请勿重复提交；额度可由管理员核对。")
 
-        if not sent:
-            return StepResult.fail(error="发送图片返回 falsy", user_message="图片已处理完成，但发送失败了")
+        if not isinstance(sent, dict) or sent.get("sent") is not True:
+            # Host 会把平台超时、发送后的回执/历史落库异常也折叠为 False，不能据此退款。
+            return StepResult.fail(error="SDK 未返回明确的图片发送结果", user_message="图片发送结果未确认，请管理员核对后再重试。")
+        req.delivery_state = "sent"
+        req.sent_message_id = sent.get("message_id") or ""
 
         mode_text = "图生图" if req.is_img2img else "文生图"
         if req.debug_info and not req.cache_hit and req.source in ("tool", "cmd_style", "cmd_natural"):

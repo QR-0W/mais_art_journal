@@ -1,7 +1,7 @@
 """/dr 命令分发器
 
 负责：
-- 插件总开关检查（禁用时只允许 /dr on）
+- 插件总开关检查（禁用时允许恢复设置及查询、核对额度）
 - 帮助渲染（rest 空 / rest == "help"）
 - 子命令查表分发（admin 权限检查）
 - fallback：风格 / 自然语言生成
@@ -13,15 +13,16 @@ kwargs 取好后传进来。
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..state import runtime_state
+import logging
+
+from ..state import StatePersistenceError
 from .registry import CommandResult, SubCommandRegistry
 
 if TYPE_CHECKING:
-    from ..plugin import MaisArtPlugin
+    from ...plugin import MaisArtPlugin
 
 logger = logging.getLogger("plugin.mais_art_journal.dispatcher")
 
@@ -39,6 +40,7 @@ class DispatcherContext:
     prefix: str = "/dr"
     user_id: str = ""
     group_id: str = ""
+    platform: str = ""
     user_nickname: str = ""
     group_name: str = ""
 
@@ -59,10 +61,14 @@ class CommandDispatcher:
         *,
         user_id: str = "",
         group_id: str = "",
+        platform: str = "",
         user_nickname: str = "",
         group_name: str = "",
     ) -> CommandResult:
-        chat_id = stream_id or ""
+        if not stream_id or stream_id.strip() != stream_id:
+            logger.error("命令缺少宿主提供的真实 session_id，拒绝读取或保存会话设置")
+            return False, "无法解析当前真实聊天流", True
+        chat_id = stream_id
         dctx = DispatcherContext(
             plugin=self.plugin,
             stream_id=stream_id,
@@ -73,16 +79,17 @@ class CommandDispatcher:
             prefix=self._resolved_prefix(),
             user_id=user_id,
             group_id=group_id,
+            platform=platform,
             user_nickname=user_nickname,
             group_name=group_name,
         )
 
         head = rest.split(maxsplit=1)[0].lower() if rest else ""
 
-        # 插件总开关例外：禁用时只允许 /dr on
+        # 禁用时也允许恢复全局配置及核对历史额度；写操作仍须经过后续管理员权限检查。
         global_enabled = self.plugin.config.plugin.enabled
-        if not runtime_state.is_plugin_enabled(chat_id, global_enabled):
-            if head != "on":
+        if not self.plugin.runtime_state.is_plugin_enabled(chat_id, global_enabled):
+            if head not in ("on", "reset", "quota", "额度", "配额"):
                 logger.info(f"{dctx.log_prefix} 插件在当前聊天流已禁用")
                 return False, "插件已禁用", True
 
@@ -100,7 +107,14 @@ class CommandDispatcher:
             if spec.admin and not dctx.is_admin:
                 await self.plugin.ctx.send.text("你无权使用此命令", stream_id)
                 return False, "无权限", True
-            return await spec.handler(self.plugin, dctx, tail)
+            try:
+                return await spec.handler(self.plugin, dctx, tail)
+            except StatePersistenceError:
+                logger.exception("%s 保存会话设置失败", dctx.log_prefix)
+                await self.plugin.ctx.send.text(
+                    "会话设置保存失败，本次修改未生效，请检查插件日志。", stream_id,
+                )
+                return False, "会话设置保存失败", True
 
         # fallback：风格 / 自然语言
         from .generate import handle_generate

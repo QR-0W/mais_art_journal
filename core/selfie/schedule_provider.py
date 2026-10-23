@@ -1,36 +1,44 @@
-"""
-日程适配层
+"""日程适配层：只通过 MaiTrace 的公开 SDK API 读取活动。
 
-提供统一的日程/活动信息接口：
-- ApiScheduleProvider: 通过 ctx.api.call 调用 autonomous_planning_plugin v4 暴露的
-  ``xuqian13.autonomous-planning-plugin-v4.get_current_activity`` API（推荐）
-- PlanningPluginProvider: 兼容旧版（v3 及以前）— 直接读 SQLite（不推荐，依赖对方
-  的 schema，且在 SDK 子进程里需要文件路径推断成功）
-- get_schedule_provider(ctx=None): 工厂函数
-    * 传 ctx → 返回 ApiScheduleProvider（运行时调用 API，不可用时再回退到 SQLite）
-    * 不传 ctx → 直接走 SQLite 旧路径
+ActivityInfo 是绘卷内部的稳定结构；不读其他插件的数据库，不计算聊天流 ID。
+外部生图调用应显式传入活动，只有主动任务和聊天自拍入口会查询此接口。
 """
 
-import datetime
-import json
-import logging
-import os
-import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import hashlib
+import logging
+import math
+import re
+import time
 
 if TYPE_CHECKING:
     from maibot_sdk.context import PluginContext
 
 logger = logging.getLogger("plugin.mais_art_journal.schedule")
+_PLANNING_API_NAME = "Rabbit-Jia-Er.MaiTrace.get_current_activity"
+_TIME_WINDOW_PATTERN = re.compile(r"(\d{1,2}):(\d{2})\s*[-~～至]\s*(\d{1,2}):(\d{2})")
+_BREAK_PATTERN = re.compile(
+    r"休息|休憩|课间|下班|饭后|餐后|跑完|做完|刚完成|完成后|结束后|"
+    r"\b(?:on|taking|during)\s+(?:a\s+)?break\b|\b(?:finished|completed)\b|"
+    r"\bafter\s+(?:work|class|studying|cooking|exercise|running|lunch|dinner)\b|休憩|終わった|終えた",
+    re.IGNORECASE,
+)
+_DRIVING_PATTERN = re.compile(r"开车|驾驶|骑车|骑行|\b(?:driving|cycling|riding a bike)\b|運転|自転車", re.IGNORECASE)
+_DRIVING_FINISHED_PATTERN = re.compile(
+    r"(?:开车|驾驶|骑车|骑行)(?:结束后|后)(?:.*?)(?:休息|休憩)|结束驾驶|开完车|"
+    r"\b(?:finished|after)\s+(?:driving|cycling)\b|運転を終えた|サイクリング後の休憩", re.IGNORECASE,
+)
+_FOCUS_PATTERN = re.compile(r"开会|会议|考试|专注|赶工|赶稿|写代码|\b(?:meeting|exam|focused work|coding)\b|会議|試験", re.IGNORECASE)
 
-# 对外暴露的 autonomous_planning v4 API 全名
-_PLANNING_API_NAME = "xuqian13.autonomous-planning-plugin-v4.get_current_activity"
 
+class ActivityType(str, Enum):
+    """配置、场景规则和主动任务共用的活动类型。"""
 
-class ActivityType(Enum):
-    """活动类型枚举"""
     SLEEPING = "sleeping"
     WAKING_UP = "waking_up"
     EATING = "eating"
@@ -42,339 +50,292 @@ class ActivityType(Enum):
     COMMUTING = "commuting"
     HOBBY = "hobby"
     SELF_CARE = "self_care"
+    COOKING = "cooking"
+    SHOPPING = "shopping"
+    GAMING = "gaming"
+    BATHING = "bathing"
     OTHER = "other"
 
 
 @dataclass
 class ActivityInfo:
-    """活动信息数据类 - 统一的活动描述格式"""
+    """活动信息；额外服装和地点字段允许 MaiTrace 不提供。"""
+
     activity_type: ActivityType
-    description: str          # 活动描述（中文）
-    mood: str = "neutral"     # 情绪
-    time_point: str = ""      # 时间点 "HH:MM"
+    description: str
+    mood: str = "neutral"
+    time_point: str = ""
+    outfit: str = ""
+    location: str = ""
+    time_window: str = ""
+    as_of: str = ""
+    timezone: str = ""
+    next_activities: List[Dict[str, str]] = field(default_factory=list)
+    scene: str = ""
+    sleep_phase: str = ""
+    energy: Optional[float] = None
+    health_note: str = ""
+
+    def to_payload(self) -> Dict[str, Any]:
+        return {
+            "type": self.activity_type.value, "description": self.description,
+            "outfit": self.outfit, "location": self.location, "time_window": self.time_window,
+            "as_of": self.as_of, "timezone": self.timezone, "next_activities": self.next_activities,
+            "scene": self.scene, "sleep_phase": self.sleep_phase, "energy": self.energy,
+            "mood": self.mood, "health_note": self.health_note,
+            "current_time": self._moment().isoformat(timespec="seconds"),
+            "remaining_seconds": self.remaining_seconds(),
+        }
+
+    def _moment(self, now: Optional[datetime] = None) -> datetime:
+        zone = ZoneInfo(self.timezone) if self.timezone else datetime.now().astimezone().tzinfo
+        if now is None:
+            return datetime.now(zone)
+        return now.replace(tzinfo=zone) if now.tzinfo is None else now.astimezone(zone)
+
+    def _time_bounds(self) -> Optional[Tuple[int, int]]:
+        if not self.time_window:
+            return None
+        match = _TIME_WINDOW_PATTERN.fullmatch(self.time_window)
+        if match is None:
+            raise ValueError("日程时间窗格式无效")
+        start = int(match[1]) * 60 + int(match[2])
+        end = int(match[3]) * 60 + int(match[4])
+        if not 0 <= start < 1440 or not 0 <= end <= 1440 or int(match[2]) >= 60 or int(match[4]) >= 60 or start == end:
+            raise ValueError("日程时间窗范围无效")
+        return start, end
+
+    def remaining_seconds(self, *, now: Optional[datetime] = None) -> Optional[float]:
+        """跨午夜时间窗按实际结束日计算；没有时间窗的旧快照返回 None。"""
+        bounds = self._time_bounds()
+        if bounds is None:
+            return None
+        moment = self._moment(now)
+        start, end = bounds
+        current = moment.hour * 60 + moment.minute
+        active = start <= current < end if end > start else current >= start or current < end
+        if not active:
+            return 0.0
+        midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
+        ends_at = midnight + timedelta(minutes=end)
+        if end < start and current >= start:
+            ends_at += timedelta(days=1)
+        return (ends_at - moment).total_seconds()
+
+    def publication_key(self) -> str:
+        """同一活动区间只分享一次；跨午夜沿用活动开始日期。"""
+        moment = self._moment()
+        day = moment.date()
+        match = _TIME_WINDOW_PATTERN.fullmatch(self.time_window)
+        if match:
+            start = int(match[1]) * 60 + int(match[2])
+            end = int(match[3]) * 60 + int(match[4])
+            if end <= start and moment.hour * 60 + moment.minute < end:
+                day -= timedelta(days=1)
+        text = f"{day}:{self.time_window or self.time_point}:{self.activity_type.value}:{self.description}"
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def publication_block_reason(
+        self, *, min_energy: float = 30, min_remaining_seconds: float = 0,
+        now: Optional[datetime] = None,
+    ) -> str:
+        """所有主动图片共用硬规则；通过后仍需 LLM 判断自然分享动机。"""
+        if not self.description.strip():
+            return "日程活动为空"
+        if self.activity_type in {ActivityType.SLEEPING, ActivityType.BATHING}:
+            return "正在睡眠或洗澡"
+        if self.sleep_phase in {"falling_asleep", "light_sleep", "deep_sleep", "woken"}:
+            return "处于睡眠阶段或刚醒未清醒"
+        if self.energy is not None:
+            if not math.isfinite(self.energy) or not 0 <= self.energy <= 100:
+                return "生活精力值无效"
+            if self.energy < min_energy:
+                return "当前精力不足"
+        text = f"{self.description} {self.scene}"
+        if _DRIVING_PATTERN.search(text) and not _DRIVING_FINISHED_PATTERN.search(text):
+            return "正在驾驶或骑行"
+        taking_break = bool(_BREAK_PATTERN.search(text))
+        if not taking_break and (self.activity_type in {
+            ActivityType.WORKING, ActivityType.STUDYING, ActivityType.EXERCISING,
+            ActivityType.COOKING, ActivityType.GAMING, ActivityType.SELF_CARE, ActivityType.EATING,
+        } or _FOCUS_PATTERN.search(text)):
+            return "当前活动需要专注，尚未进入休息时间"
+        if self.activity_type == ActivityType.WAKING_UP and not re.search(r"已清醒|清醒后|fully awake|目が覚めて", text, re.IGNORECASE):
+            return "刚起床，尚未确认清醒"
+        if not self.as_of and not self.time_window:
+            return "日程缺少快照时间和有效时间窗"
+        try:
+            moment = self._moment(now)
+            if self.as_of:
+                snapshot_time = datetime.fromisoformat(self.as_of)
+                if snapshot_time.tzinfo is None:
+                    snapshot_time = snapshot_time.replace(tzinfo=moment.tzinfo)
+                if not -60 <= moment.timestamp() - snapshot_time.timestamp() <= 15 * 60:
+                    return "日程快照已过期或来自未来"
+            remaining = self.remaining_seconds(now=moment)
+            if remaining is not None and remaining <= min_remaining_seconds:
+                return "当前不在活动时间窗内或剩余时间不足"
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            return f"日程时间无效: {exc}"
+        return ""
+
+    def current_time(self) -> str:
+        """供提示词使用的本地时间，避免场景生成猜测季节和时段。"""
+        return self._moment().isoformat(timespec="seconds")
+
+    def can_publish(self) -> bool:
+        """兼容旧调用；主动任务可获取具体拒绝原因并传入统一精力阈值。"""
+        return not self.publication_block_reason()
 
 
-# ==================== 活动类型映射（API + SQLite 共用） ====================
-
-_TYPE_KEYWORD_MAP: Dict[str, ActivityType] = {
-    # 英文关键词
-    "work": ActivityType.WORKING,
-    "study": ActivityType.STUDYING,
-    "exercise": ActivityType.EXERCISING,
-    "eat": ActivityType.EATING,
-    "meal": ActivityType.EATING,
-    "rest": ActivityType.RELAXING,
-    "relax": ActivityType.RELAXING,
-    "social": ActivityType.SOCIALIZING,
+# MaiTrace 保留 goal_type 兼容字段；明确分类优先于描述中的关键词。
+_TYPE_KEYWORDS: Dict[str, ActivityType] = {
+    "waking": ActivityType.WAKING_UP, "起床": ActivityType.WAKING_UP,
+    "睡醒": ActivityType.WAKING_UP, "醒来": ActivityType.WAKING_UP,
+    "sleep": ActivityType.SLEEPING, "睡": ActivityType.SLEEPING,
+    "bath": ActivityType.BATHING, "洗澡": ActivityType.BATHING,
+    "cook": ActivityType.COOKING, "烹饪": ActivityType.COOKING, "做饭": ActivityType.COOKING,
+    "下厨": ActivityType.COOKING, "做早餐": ActivityType.COOKING,
+    "做午饭": ActivityType.COOKING, "做晚饭": ActivityType.COOKING,
+    "work": ActivityType.WORKING, "工作": ActivityType.WORKING, "上班": ActivityType.WORKING,
+    "study": ActivityType.STUDYING, "学习": ActivityType.STUDYING, "阅读": ActivityType.STUDYING,
+    "learn_topic": ActivityType.STUDYING, "读书": ActivityType.STUDYING,
+    "exercise": ActivityType.EXERCISING, "运动": ActivityType.EXERCISING,
+    "跑步": ActivityType.EXERCISING, "健身": ActivityType.EXERCISING,
+    "锻炼": ActivityType.EXERCISING, "瑜伽": ActivityType.EXERCISING,
+    "eat": ActivityType.EATING, "meal": ActivityType.EATING, "吃": ActivityType.EATING, "餐": ActivityType.EATING,
+    "shop": ActivityType.SHOPPING, "购物": ActivityType.SHOPPING,
+    "game": ActivityType.GAMING, "gaming": ActivityType.GAMING, "游戏": ActivityType.GAMING,
+    "rest": ActivityType.RELAXING, "relax": ActivityType.RELAXING, "休息": ActivityType.RELAXING,
+    "看电影": ActivityType.RELAXING, "追剧": ActivityType.RELAXING, "听音乐": ActivityType.RELAXING,
+    "social": ActivityType.SOCIALIZING, "社交": ActivityType.SOCIALIZING,
+    "commut": ActivityType.COMMUTING, "通勤": ActivityType.COMMUTING,
+    "self_care": ActivityType.SELF_CARE, "梳妆": ActivityType.SELF_CARE, "护肤": ActivityType.SELF_CARE,
+    "洗脸": ActivityType.SELF_CARE, "刷牙": ActivityType.SELF_CARE,
     "hobby": ActivityType.HOBBY,
-    "sleep": ActivityType.SLEEPING,
-    "self_care": ActivityType.SELF_CARE,
-    "commut": ActivityType.COMMUTING,
-    # 中文关键词
-    "工作": ActivityType.WORKING,
-    "办公": ActivityType.WORKING,
-    "会议": ActivityType.WORKING,
-    "学习": ActivityType.STUDYING,
-    "阅读": ActivityType.STUDYING,
-    "读书": ActivityType.STUDYING,
-    "审阅": ActivityType.STUDYING,
-    "看书": ActivityType.STUDYING,
-    "研究": ActivityType.STUDYING,
-    "运动": ActivityType.EXERCISING,
-    "锻炼": ActivityType.EXERCISING,
-    "健身": ActivityType.EXERCISING,
-    "散步": ActivityType.EXERCISING,
-    "吃": ActivityType.EATING,
-    "餐": ActivityType.EATING,
-    "料理": ActivityType.EATING,
-    "烹饪": ActivityType.EATING,
-    "休息": ActivityType.RELAXING,
-    "放松": ActivityType.RELAXING,
-    "泡澡": ActivityType.RELAXING,
-    "泡浴": ActivityType.RELAXING,
-    "聊天": ActivityType.SOCIALIZING,
-    "交流": ActivityType.SOCIALIZING,
-    "社交": ActivityType.SOCIALIZING,
-    "睡": ActivityType.SLEEPING,
-    "梦": ActivityType.SLEEPING,
-    "入眠": ActivityType.SLEEPING,
-    "午休": ActivityType.SLEEPING,
-    "小憩": ActivityType.SLEEPING,
-    "梳妆": ActivityType.SELF_CARE,
-    "打扮": ActivityType.SELF_CARE,
-    "化妆": ActivityType.SELF_CARE,
-    "护肤": ActivityType.SELF_CARE,
-    "通勤": ActivityType.COMMUTING,
-    "赶路": ActivityType.COMMUTING,
-    "出行": ActivityType.COMMUTING,
 }
 
 
-def _classify_activity(*hints: str) -> ActivityType:
-    """根据多个候选字段（goal_type / name / description）猜活动类型，找不到返回 OTHER"""
-    haystack = " ".join((h or "") for h in hints).lower()
-    if not haystack.strip():
-        return ActivityType.OTHER
-    for key, atype in _TYPE_KEYWORD_MAP.items():
-        if key in haystack:
-            return atype
+def classify_activity(*hints: str) -> ActivityType:
+    """按结构化类型、名称、描述依次识别；未分类的活动明确归为 other。"""
+    known_types = {item.value for item in ActivityType}
+    # rest/meal 等粗分类不能掩盖睡觉、做饭等描述中的具体活动。
+    coarse_hints = {"rest", "relax", "meal", "eat", "entertainment", "daily_routine", "custom"}
+    ordered = [hint for hint in hints if hint.strip().lower() not in coarse_hints]
+    ordered.extend(hint for hint in hints if hint.strip().lower() in coarse_hints)
+    for hint in ordered:
+        normalized = hint.strip().lower()
+        if normalized in known_types:
+            return ActivityType(normalized)
+        for keyword, activity_type in _TYPE_KEYWORDS.items():
+            if keyword in normalized:
+                return activity_type
     return ActivityType.OTHER
 
 
-# ==================== Provider 基类 ====================
-
 class ScheduleProvider:
-    """日程提供者基类"""
-
     async def get_current_activity(self) -> Optional[ActivityInfo]:
-        """获取当前时间对应的活动信息"""
         raise NotImplementedError
 
 
-# ==================== API 路径（推荐） ====================
-
 class ApiScheduleProvider(ScheduleProvider):
-    """通过 SDK API 调用 autonomous_planning_plugin v4 取当前活动
+    """通过 Host 转发读取 MaiTrace 日程，缺失或服务错误时记录原因并返回空活动。"""
 
-    优点：完全走 SDK 能力代理，不耦合对方的 SQLite 表结构，不依赖文件路径推断；
-    当对方插件未加载 / 未到 v4 / API 不可见时调用会失败，本类自动回退到
-    SQLite provider（如果能找到 db 文件）。
-    """
-
-    def __init__(self, ctx: "PluginContext", chat_id: str = "global"):
+    def __init__(self, ctx: "PluginContext", chat_id: str = "global", timeout_seconds: float = 20, *, include_life: bool = False):
         self._ctx = ctx
-        self._chat_id = chat_id or "global"
-        # 懒加载的 SQLite fallback
-        self._sqlite_fallback: Optional[PlanningPluginProvider] = None
-        self._sqlite_fallback_inited: bool = False
+        self._chat_id = chat_id
+        self._timeout_seconds = timeout_seconds
+        self._include_life = include_life
 
     async def get_current_activity(self) -> Optional[ActivityInfo]:
-        snapshot = await self._call_api()
-        if snapshot is not None:
-            return self._snapshot_to_activity(snapshot)
-        # API 调用失败 → 回退 SQLite
-        fallback = self._get_sqlite_fallback()
-        if fallback is not None:
-            logger.info("autonomous_planning API 不可用，回退到 SQLite 直读")
-            return await fallback.get_current_activity()
-        return None
-
-    async def _call_api(self) -> Optional[Dict[str, Any]]:
         try:
-            result = await self._ctx.api.call(_PLANNING_API_NAME, chat_id=self._chat_id)
-        except Exception as exc:
-            logger.debug(f"调用 autonomous_planning API 失败: {exc}")
+            result = await self._ctx.call_capability(
+                "api.call", timeout_ms=int(self._timeout_seconds * 1000),
+                api_name=_PLANNING_API_NAME, version="1", args={"chat_id": self._chat_id},
+            )
+            if not isinstance(result, dict):
+                raise ValueError("MaiTrace 日程 API 返回值必须为字典")
+            if result.get("success") is False or result.get("error"):
+                raise RuntimeError(str(result.get("error") or "MaiTrace 日程 API 调用失败"))
+            activity = self._snapshot_to_activity(result)
+            if activity is not None and self._include_life:
+                await self._enrich_life(activity)
+            return activity
+        except Exception:
+            logger.exception("读取 MaiTrace 当前日程失败，本次不使用日程")
             return None
-        if not isinstance(result, dict):
-            return None
-        if result.get("error"):
-            logger.debug(f"autonomous_planning API 返回错误: {result.get('error')}")
-            return None
-        return result
+
+    async def _enrich_life(self, activity: ActivityInfo) -> None:
+        """当前 MaiTrace 公开生活接口可选；禁用生活模块时仍使用有效日程。"""
+        try:
+            state = await self._ctx.call_capability(
+                "api.call", timeout_ms=10000,
+                api_name="Rabbit-Jia-Er.MaiTrace.get_life_state", version="1", args={},
+            )
+            if not isinstance(state, dict):
+                raise ValueError("MaiTrace 生活状态必须为字典")
+            if state.get("success") is False or state.get("error"):
+                raise RuntimeError(str(state.get("error") or "MaiTrace 生活 API 调用失败"))
+            if not state.get("enabled"):
+                return
+            # 全局睡眠/精力也必须新鲜；旧生活快照不能覆盖当前日程。
+            updated = state.get("last_updated_at", 0)
+            if type(updated) not in (int, float) or not -60 <= time.time() - updated <= 15 * 60:
+                return
+            activity.sleep_phase = str(state.get("sleep_phase", ""))
+            activity.health_note = str(state.get("health_note", "")).strip()
+            energy = state.get("energy")
+            if type(energy) in (int, float) and math.isfinite(energy):
+                activity.energy = float(energy)
+            mood = state.get("mood_valence")
+            if type(mood) in (int, float) and math.isfinite(mood):
+                activity.mood = f"valence={mood:g}"
+            # 具体场景和地点只能来自同一活动，不能把之前的厨房/卧室带进本轮。
+            if str(state.get("current_activity", "")).strip() != activity.description:
+                return
+            activity.location = activity.location or str(state.get("current_location", "")).strip()
+            scene = str(state.get("scene", "")).strip()
+            if scene:
+                activity.scene = scene
+        except Exception:
+            logger.exception("读取 MaiTrace 生活状态失败，本轮仅使用日程")
 
     @staticmethod
     def _snapshot_to_activity(snapshot: Dict[str, Any]) -> Optional[ActivityInfo]:
-        """把 v4 API 返回结构映射成本插件用的 ActivityInfo"""
         if not snapshot.get("has_activity"):
             return None
         activity = snapshot.get("activity")
         if not isinstance(activity, dict):
-            return None
-
-        name = str(activity.get("name") or "").strip()
-        description = str(activity.get("description") or "").strip() or name or "日常活动"
-        goal_type = str(activity.get("goal_type") or "").strip()
-        activity_type = _classify_activity(goal_type, name, description)
-
-        # 用 time_window 的开始时间作为 time_point；缺失就用 as_of 截到 HH:MM
-        time_window = str(activity.get("time_window") or "").strip()
-        time_point = ""
-        if time_window and "-" in time_window:
-            time_point = time_window.split("-", 1)[0].strip()
-        if not time_point:
-            as_of = str(snapshot.get("as_of") or "")
-            # 期望 ISO 形如 2026-05-25T14:30:00+08:00
-            if "T" in as_of:
-                time_point = as_of.split("T", 1)[1][:5]
-        if not time_point:
-            time_point = datetime.datetime.now().strftime("%H:%M")
-
-        return ActivityInfo(
-            activity_type=activity_type,
-            description=description,
-            mood="neutral",
-            time_point=time_point,
+            raise ValueError("MaiTrace 日程标记 has_activity，但未提供 activity 字典")
+        parameters = activity.get("parameters", {})
+        if not isinstance(parameters, dict):
+            raise ValueError("MaiTrace activity.parameters 必须为字典")
+        name = str(activity.get("name", "")).strip()
+        description = str(activity.get("description", "")).strip() or name
+        if not description:
+            raise ValueError("MaiTrace 当前活动缺少名称和描述")
+        activity_type = classify_activity(
+            str(activity.get("activity_type", "")), str(activity.get("goal_type", "")), name, description,
         )
-
-    def _get_sqlite_fallback(self) -> Optional["PlanningPluginProvider"]:
-        if self._sqlite_fallback_inited:
-            return self._sqlite_fallback
-        self._sqlite_fallback_inited = True
-        self._sqlite_fallback = _build_sqlite_provider()
-        return self._sqlite_fallback
-
-
-# ==================== SQLite 直读路径（fallback） ====================
-
-class PlanningPluginProvider(ScheduleProvider):
-    """
-    从 autonomous_planning 插件的 SQLite 数据库读取日程（fallback / 老版本兼容）
-
-    goals 表结构关键字段：
-    - goal_id, name, description, goal_type, status, created_at
-    - parameters (JSON): 包含 time_window: [start_minutes, end_minutes]
-    """
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        logger.info(f"PlanningPluginProvider (SQLite fallback) 初始化, db: {db_path}")
-
-    async def get_current_activity(self) -> Optional[ActivityInfo]:
-        try:
-            if not os.path.exists(self.db_path):
-                return None
-
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-
-            now = datetime.datetime.now()
-            current_time_str = now.strftime("%H:%M")
-            today_str = now.strftime("%Y-%m-%d")
-            current_minutes = now.hour * 60 + now.minute
-
-            rows = []
-            try:
-                cursor.execute("""
-                    SELECT * FROM goals
-                    WHERE status = 'active'
-                    AND substr(created_at, 1, 10) = ?
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                """, (today_str,))
-                rows = cursor.fetchall()
-            except Exception:
-                pass
-
-            if not rows:
-                logger.debug("今天没有活跃目标，回退到最近的活跃记录")
-                cursor.execute("""
-                    SELECT * FROM goals
-                    WHERE status = 'active'
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                """)
-                rows = cursor.fetchall()
-
-            conn.close()
-
-            if not rows:
-                return None
-
-            for row in rows:
-                row_dict = dict(row)
-                time_window = self._extract_time_window(row_dict)
-                if time_window and len(time_window) == 2:
-                    start_min, end_min = int(time_window[0]), int(time_window[1])
-                    if self._is_minutes_in_range(current_minutes, start_min, end_min):
-                        return self._row_to_activity(row_dict, current_time_str)
-
-            first = dict(rows[0])
-            return self._row_to_activity(first, current_time_str)
-
-        except Exception as e:
-            logger.error(f"PlanningPluginProvider 查询失败: {e}")
-            return None
-
-    @staticmethod
-    def _extract_time_window(row: dict) -> Optional[List[int]]:
-        params_raw = row.get("parameters")
-        if not params_raw:
-            return None
-        try:
-            params = json.loads(params_raw) if isinstance(params_raw, str) else params_raw
-            return params.get("time_window")
-        except (json.JSONDecodeError, TypeError):
-            return None
-
-    @staticmethod
-    def _row_to_activity(row: dict, current_time: str) -> ActivityInfo:
-        description = row.get("description", "") or row.get("name", "") or "日常活动"
-        goal_type = row.get("goal_type", "") or ""
-        activity_type = _classify_activity(goal_type, description)
+        time_window = str(activity.get("time_window", ""))
+        upcoming = snapshot.get("next_activities", [])
+        if not isinstance(upcoming, list):
+            raise ValueError("MaiTrace next_activities 必须为列表")
         return ActivityInfo(
-            activity_type=activity_type,
-            description=description,
-            mood="neutral",
-            time_point=current_time,
+            activity_type=activity_type, description=description,
+            time_point=time_window.split("-", 1)[0].strip(),
+            # MaiTrace 6.x 将地点、服装和场景放在 parameters；保留旧顶层字段的优先级。
+            outfit=str(activity.get("outfit", "")).strip() or str(parameters.get("outfit", "")).strip(),
+            location=str(activity.get("location", "")).strip() or str(parameters.get("location", "")).strip(),
+            scene=str(activity.get("scene", "")).strip() or str(parameters.get("scene_hint", "")).strip(),
+            time_window=time_window.strip(), as_of=str(snapshot.get("as_of", "")).strip(),
+            timezone=str(snapshot.get("timezone", "")).strip(),
+            next_activities=[{"time": str(item.get("time", "")), "name": str(item.get("name", ""))} for item in upcoming[:3] if isinstance(item, dict)],
         )
-
-    @staticmethod
-    def _is_minutes_in_range(current: int, start: int, end: int) -> bool:
-        if end < start:
-            return current >= start or current <= end
-        return start <= current <= end
-
-
-# ==================== 工厂 ====================
-
-def _build_sqlite_provider(
-    planning_db_search_dirs: Optional[list] = None,
-) -> Optional[PlanningPluginProvider]:
-    """搜索 autonomous_planning 的 SQLite db；找不到返回 None"""
-    if planning_db_search_dirs is None:
-        # __file__ = plugins/mais_art_journal/core/selfie/schedule_provider.py
-        # 需要回到 plugins/ 目录（4 层 dirname）
-        plugins_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        planning_db_search_dirs = [
-            os.path.join(plugins_dir, "xuqian13_autonomous-planning-plugin-v4"),
-            os.path.join(plugins_dir, "autonomous_planning_plugin"),
-            os.path.join(plugins_dir, "autonomous_planning"),
-        ]
-
-    for search_dir in planning_db_search_dirs:
-        if not os.path.isdir(search_dir):
-            continue
-        check_dirs = [search_dir, os.path.join(search_dir, "data"), os.path.join(search_dir, "database")]
-        for check_dir in check_dirs:
-            if not os.path.isdir(check_dir):
-                continue
-            for fname in os.listdir(check_dir):
-                if fname.endswith((".db", ".sqlite", ".sqlite3")):
-                    db_path = os.path.join(check_dir, fname)
-                    try:
-                        conn = sqlite3.connect(db_path)
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='goals'")
-                        if cursor.fetchone():
-                            conn.close()
-                            logger.info(f"找到 autonomous_planning 数据库: {db_path}")
-                            return PlanningPluginProvider(db_path)
-                        conn.close()
-                    except Exception:
-                        pass
-    return None
 
 
 def get_schedule_provider(
-    ctx: Optional["PluginContext"] = None,
-    chat_id: str = "global",
-    planning_db_search_dirs: Optional[list] = None,
-) -> Optional[ScheduleProvider]:
-    """工厂函数：返回可用的日程 provider
-
-    Args:
-        ctx: SDK PluginContext；传入后走 API 调用路径（内置 SQLite fallback）
-        chat_id: API 调用时使用的会话作用域，默认 ``global``
-        planning_db_search_dirs: 仅 ctx=None 时使用，搜索 SQLite db 的目录列表
-
-    Returns:
-        ScheduleProvider 实例；ctx 为空且 SQLite 也找不到时返回 None
-    """
-    if ctx is not None:
-        return ApiScheduleProvider(ctx, chat_id=chat_id)
-
-    fallback = _build_sqlite_provider(planning_db_search_dirs)
-    if fallback is None:
-        logger.warning("未找到 autonomous_planning 数据库（且未提供 ctx）")
-    return fallback
+    ctx: "PluginContext", chat_id: str = "global", timeout_seconds: float = 20, *, include_life: bool = False,
+) -> ScheduleProvider:
+    """只创建 SDK 日程适配器；global 是日程作用域，不是聊天资源归属 ID。"""
+    return ApiScheduleProvider(ctx, chat_id, timeout_seconds, include_life=include_life)

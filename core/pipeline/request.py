@@ -18,7 +18,7 @@ SourceLiteral = Literal[
     "standalone",    # generate_image_standalone 外部调用
 ]
 
-SelfieStyleLiteral = Literal["standard", "mirror", "photo"]
+SelfieStyleLiteral = Literal["auto", "standard", "mirror", "photo"]
 
 
 @dataclass
@@ -38,6 +38,15 @@ class GenerationRequest:
     selfie_style: SelfieStyleLiteral = "standard"
     free_hand_action: str = ""
     activity_scene: Optional[Dict[str, Any]] = None
+    activity_type: str = ""
+    activity_description: str = ""
+    outfit: str = ""
+    activity_location: str = ""
+    activity_time_window: str = ""
+    activity_as_of: str = ""
+    activity_timezone: str = ""
+    activity_scene_description: str = ""
+    recent_selfie_styles: list[str] = field(default_factory=list)
 
     # ==================== 行为开关（各 Step 自查短路） ====================
     send_image: bool = True
@@ -50,6 +59,9 @@ class GenerationRequest:
     # ==================== 上下文 ====================
     stream_id: str = ""
     chat_id: str = ""
+    user_id: str = ""
+    group_id: str = ""
+    platform: str = ""
     log_prefix: str = "[MaisArt]"
     command_message: Any = None
     source: SourceLiteral = "tool"
@@ -65,7 +77,11 @@ class GenerationRequest:
     parsed_image_data: Optional[str] = None
     resolved_image_data: Optional[str] = None
     send_timestamp: float = 0.0
+    sent_message_id: str = ""
     cache_hit: bool = False
+    # 只有 SDK 明确返回结果才能确认投递；取消/异常期间保留 unknown，供额度结算。
+    delivery_state: Literal["not_sent", "unknown", "sent"] = "not_sent"
+    quota_reservation_id: str = ""
 
     # ==================== 输出 ====================
     success: bool = False

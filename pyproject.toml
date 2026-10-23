@@ -1,0 +1,27 @@
+[project]
+name = "mais-art-journal"
+version = "4.6.2"
+description = "麦麦绘卷：多模型生图、原生 NovelAI、日程自拍与聊天额度"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.12"
+dependencies = [
+    "maibot-plugin-sdk>=2.15.0,<3",
+    "requests>=2.28.0",
+    "Pillow>=10",
+    "pydantic>=2,<3",
+    "tomlkit>=0.12",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+doubao = ["volcengine-python-sdk[ark]"]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -1,9 +1,7 @@
-"""请求级上下文适配器
-
-替代旧版 BaseCommand 在 helper 模块中的 self.action 角色：
+"""当前 SDK 的请求级上下文：
 - 把 plugin.get_plugin_config_data() 的嵌套字典包装为 get_config(key, default)
 - 暴露 plugin.ctx（PluginContext）和 log_prefix
-- 提供 ImageProcessor 等 helper 期望的 message 字段
+- 提供 ImageProcessor 使用的触发消息字典
 
 每次 Tool/Command 触发时由插件入口构造，传给 ImageProcessor/CacheManager/BaseApiClient 等 helper。
 """
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class RequestContext:
-    """组件请求上下文（替代旧 BaseCommand 实例）"""
+    """组件请求上下文。"""
 
     def __init__(
         self,
@@ -39,7 +37,7 @@ class RequestContext:
         return self.plugin.ctx
 
     def get_config(self, key: str, default: Any = None) -> Any:
-        """嵌套 dot-path 配置读取，兼容旧 BaseAction.get_config 行为"""
+        """读取当前插件配置中的嵌套字段。"""
         config = self.plugin.get_plugin_config_data()
         parts = key.split(".")
         current: Any = config

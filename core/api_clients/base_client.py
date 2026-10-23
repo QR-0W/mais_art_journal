@@ -1,6 +1,5 @@
 """API客户端基类"""
 import asyncio
-import base64
 import logging
 from typing import Dict, Any, Tuple, Optional
 
@@ -22,52 +21,22 @@ QUEUED_MARK = "[QUEUED]"
 class BaseApiClient:
     """API客户端基类
 
-    构造时接收 ClientContext（新接口）或任何具备 `get_config + log_prefix` 的
-    duck-typed 对象（兼容 RequestContext / 旧 action_instance）。
+    所有调用方统一传入 ClientContext，代理和配置通过该上下文读取。
     """
 
     # 子类需要设置的格式名称
     format_name: str = "base"
 
-    def __init__(self, client_ctx):
-        # 兼容三类调用方：ClientContext / RequestContext / 旧 action_instance
-        if not hasattr(client_ctx, "get_config") or not hasattr(client_ctx, "log_prefix"):
-            raise TypeError(
-                "BaseApiClient 需要一个具备 get_config 与 log_prefix 的上下文对象"
-            )
+    def __init__(self, client_ctx: ClientContext) -> None:
         self.ctx = client_ctx
-        # 保留 self.action 别名，便于 9 个旧 client 渐进改造
-        self.action = client_ctx
         self.log_prefix = client_ctx.log_prefix
 
     def _get_proxy_config(self) -> Optional[Dict[str, Any]]:
-        """获取代理配置（ClientContext 走 get_proxy_config，duck-typed 回退读 get_config）"""
-        try:
-            # 优先走 ClientContext 提供的封装
-            if isinstance(self.ctx, ClientContext):
-                cfg = self.ctx.get_proxy_config()
-                if cfg:
-                    logger.info(f"{self.log_prefix} 代理已启用: {cfg.get('http')}")
-                return cfg
-
-            # 回退：从 get_config 平铺读取
-            proxy_enabled = self.ctx.get_config("proxy.enabled", False)
-            if not proxy_enabled:
-                return None
-
-            proxy_url = self.ctx.get_config("proxy.url", "http://127.0.0.1:7890")
-            timeout = self.ctx.get_config("proxy.timeout", 60)
-
-            proxy_config = {
-                "http": proxy_url,
-                "https": proxy_url,
-                "timeout": timeout,
-            }
-            logger.info(f"{self.log_prefix} 代理已启用: {proxy_url}")
-            return proxy_config
-        except Exception as e:
-            logger.warning(f"{self.log_prefix} 获取代理配置失败: {e}, 将不使用代理")
-            return None
+        """从客户端上下文获取代理配置。"""
+        config = self.ctx.get_proxy_config()
+        if config:
+            logger.info(f"{self.log_prefix} 代理已启用: {config['http']}")
+        return config
 
     def _prepare_image_data_uri(self, image_base64: str) -> str:
         """准备图片的data URI格式

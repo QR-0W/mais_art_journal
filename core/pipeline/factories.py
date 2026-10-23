@@ -13,13 +13,12 @@
 """
 from __future__ import annotations
 
-import base64
-import logging
-import os
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+import logging
+
 from ..api_clients import build_client_context_from_plugin, get_client_class
-from ..state import runtime_state
+from ..selfie.reference_image import load_reference_image
 from ..utils import CacheManager, ImageProcessor
 from ..utils.request_context import RequestContext
 from .pipeline import Pipeline
@@ -43,7 +42,7 @@ from .steps import (
 )
 
 if TYPE_CHECKING:
-    from ..plugin import MaisArtPlugin
+    from ...plugin import MaisArtPlugin
 
 logger = logging.getLogger("plugin.mais_art_journal.factories")
 
@@ -212,23 +211,8 @@ def _build_log_prefix(kwargs: Dict[str, Any]) -> str:
 
 def _load_selfie_reference_image(plugin: "MaisArtPlugin", log_prefix: str) -> Optional[str]:
     """加载 selfie.reference_image_path 指定的参考图，返回 base64 或 None"""
-    path = (plugin.config.selfie.reference_image_path or "").strip()
-    if not path:
-        return None
-
-    try:
-        if not os.path.isabs(path):
-            path = os.path.join(plugin.plugin_dir, path)
-        if not os.path.exists(path):
-            logger.warning(f"{log_prefix} 自拍参考图片文件不存在: {path}")
-            return None
-        with open(path, "rb") as f:
-            data = f.read()
-        logger.info(f"{log_prefix} 从文件加载自拍参考图片: {path}")
-        return base64.b64encode(data).decode("utf-8")
-    except Exception as e:
-        logger.error(f"{log_prefix} 加载自拍参考图片失败: {e}")
-        return None
+    del log_prefix
+    return load_reference_image(plugin.plugin_dir, plugin.config.selfie.reference_image_path)
 
 
 async def build_request_from_tool_kwargs(
@@ -248,12 +232,15 @@ async def build_request_from_tool_kwargs(
     调用方应直接返回 (False, msg)。
     """
     stream_id: str = str(kwargs.get("stream_id") or "")
-    chat_id: str = str(kwargs.get("chat_id") or stream_id)
+    if not stream_id or stream_id.strip() != stream_id:
+        raise ValueError("智能生图缺少宿主提供的真实 session_id")
+    # 覆盖项始终归属宿主聊天流；chat_id 可能是平台目标 ID，不能作为存储键。
+    chat_id: str = stream_id
     log_prefix = _build_log_prefix(kwargs)
 
     # 插件总开关
     global_enabled = plugin.config.plugin.enabled
-    if not runtime_state.is_plugin_enabled(chat_id, global_enabled):
+    if not plugin.runtime_state.is_plugin_enabled(chat_id, global_enabled):
         logger.info(f"{log_prefix} 插件在当前聊天流已禁用")
         return None  # 静默跳过
 
@@ -270,10 +257,10 @@ async def build_request_from_tool_kwargs(
 
     # 自拍风格优先级：运行时 > LLM > 全局
     global_style = plugin.config.selfie.default_style
-    runtime_style = runtime_state.get_selfie_style(chat_id, None)
+    runtime_style = plugin.runtime_state.get_selfie_style(chat_id, None)
     if runtime_style is not None:
         selfie_style = runtime_style
-    elif selfie_style_llm in ("standard", "mirror", "photo"):
+    elif selfie_style_llm in ("auto", "standard", "mirror", "photo"):
         selfie_style = selfie_style_llm
     else:
         selfie_style = global_style
@@ -308,37 +295,38 @@ async def build_request_from_tool_kwargs(
     input_image_base64: Optional[str] = None
     silent_fallback = False
     activity_scene: Optional[Dict[str, Any]] = None
+    activity_type = ""
+    activity_description = ""
+    outfit = ""
+    activity_metadata: Dict[str, str] = {}
 
     if is_selfie:
         # 日程场景增强
         global_schedule = plugin.config.selfie.schedule_enabled
-        if runtime_state.is_selfie_schedule_enabled(chat_id, global_schedule):
+        if plugin.runtime_state.is_selfie_schedule_enabled(chat_id, global_schedule):
             try:
                 from ..selfie.schedule_provider import get_schedule_provider
-                from ..prompts.scene_action_llm import generate_scene_with_llm, get_action_for_activity
-                provider = get_schedule_provider(ctx=plugin.ctx, chat_id="global")
-                if provider:
-                    activity = await provider.get_current_activity()
-                    if activity:
-                        activity_scene = await generate_scene_with_llm(
-                            plugin.ctx, activity, selfie_style,
-                            llm_task=plugin.config.basic.llm_task_name or "utils",
-                        )
-                        if activity_scene:
-                            logger.info(f"{log_prefix} LLM 生成日程场景: {activity.activity_type.value}")
-                        else:
-                            activity_scene = get_action_for_activity(activity)
-                            logger.info(f"{log_prefix} LLM 失败，使用确定性映射: {activity.activity_type.value}")
+                provider = get_schedule_provider(ctx=plugin.ctx, chat_id="global", include_life=True)
+                activity = await provider.get_current_activity()
+                if activity:
+                    activity_type = activity.activity_type.value
+                    activity_description = activity.description
+                    outfit = activity.outfit
+                    activity_metadata = {
+                        "activity_location": activity.location, "activity_time_window": activity.time_window,
+                        "activity_as_of": activity.as_of, "activity_timezone": activity.timezone,
+                        "activity_scene_description": activity.scene,
+                    }
             except Exception as e:
-                logger.debug(f"{log_prefix} 获取日程活动失败（非必要）: {e}")
+                logger.exception(f"{log_prefix} 获取日程活动失败（非必要）: {e}")
 
         # 参考图（图生图自拍）
         reference_image = _load_selfie_reference_image(plugin, log_prefix)
         if reference_image:
             input_image_base64 = reference_image
             silent_fallback = True
-            if strength is None or strength > 0.6:
-                strength = 0.6
+            if kwargs.get("strength") in (None, ""):
+                strength = None  # 由已解析的生图后端决定是否需要降噪强度。
     else:
         triggering_msg_id = str(_arg_get(kwargs, "msg_id", "") or "").strip()
         if triggering_msg_id:
@@ -367,6 +355,10 @@ async def build_request_from_tool_kwargs(
         selfie_style=selfie_style,  # type: ignore[arg-type]
         free_hand_action=free_hand_action,
         activity_scene=activity_scene,
+        activity_type=activity_type,
+        activity_description=activity_description,
+        outfit=outfit,
+        **activity_metadata,
         send_image=True,
         update_cache=True,
         schedule_recall=True,
@@ -374,6 +366,9 @@ async def build_request_from_tool_kwargs(
         silent_img2img_fallback=silent_fallback,
         stream_id=stream_id,
         chat_id=chat_id,
+        user_id=str(kwargs.get("user_id") or ""),
+        group_id=str(kwargs.get("group_id") or ""),
+        platform=str(kwargs.get("platform") or ""),
         log_prefix=log_prefix,
         source="tool",
     )

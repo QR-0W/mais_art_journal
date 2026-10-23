@@ -4,9 +4,10 @@ dispatcher 在子命令查表未命中时进入这里。
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Optional
+
 import logging
 import re
-from typing import TYPE_CHECKING, Optional
 
 from ..config import get_model_config, get_style_prompt, resolve_style_alias
 from ..pipeline import (
@@ -15,13 +16,12 @@ from ..pipeline import (
     build_style_command_pipeline,
     make_pipeline_context,
 )
-from ..state import runtime_state
 from ..utils import ImageProcessor
 from ..utils.request_context import RequestContext
 from .registry import CommandResult
 
 if TYPE_CHECKING:
-    from ..plugin import MaisArtPlugin
+    from ...plugin import MaisArtPlugin
     from .dispatcher import DispatcherContext
 
 logger = logging.getLogger("plugin.mais_art_journal.cmd.generate")
@@ -54,6 +54,9 @@ def _get_natural_pipeline():
 
 async def handle_generate(plugin: "MaisArtPlugin", dctx: "DispatcherContext", content: str) -> CommandResult:
     """fallback 入口：先尝试风格，否则按自然语言"""
+    if not plugin.config.basic.enable_pic_command:
+        await plugin.ctx.send.text("图片生成命令已关闭，仍可使用管理和额度命令。", dctx.stream_id)
+        return False, "图片生成命令已关闭", True
     if not content:
         await plugin.ctx.send.text(
             f"请指定风格或描述，格式：{dctx.prefix} <风格> 或 {dctx.prefix} <描述>\n"
@@ -96,9 +99,9 @@ async def _execute_style_mode(
 ) -> CommandResult:
     chat_id, stream_id = dctx.chat_id, dctx.stream_id
     global_command_model = plugin.config.basic.pic_command_model
-    model_id = runtime_state.get_command_default_model(chat_id, global_command_model)
+    model_id = plugin.runtime_state.get_command_default_model(chat_id, global_command_model)
 
-    if not runtime_state.is_model_enabled(chat_id, model_id):
+    if not plugin.runtime_state.is_model_enabled(chat_id, model_id):
         await plugin.ctx.send.text(f"模型 {model_id} 当前不可用", stream_id)
         return False, f"模型 {model_id} 已禁用", True
 
@@ -139,6 +142,9 @@ async def _execute_style_mode(
         debug_info=plugin.config.basic.enable_debug_info,
         stream_id=stream_id,
         chat_id=chat_id,
+        user_id=dctx.user_id,
+        group_id=dctx.group_id,
+        platform=dctx.platform,
         log_prefix=dctx.log_prefix,
         command_message=dctx.message,
         source="cmd_style",
@@ -168,9 +174,9 @@ async def _execute_natural_mode(
         logger.info(f"{dctx.log_prefix} 从描述中提取模型ID: {model_id}")
     else:
         global_command_model = plugin.config.basic.pic_command_model
-        model_id = runtime_state.get_command_default_model(chat_id, global_command_model)
+        model_id = plugin.runtime_state.get_command_default_model(chat_id, global_command_model)
 
-    if not runtime_state.is_model_enabled(chat_id, model_id):
+    if not plugin.runtime_state.is_model_enabled(chat_id, model_id):
         await plugin.ctx.send.text(f"模型 {model_id} 当前不可用", stream_id)
         return False, f"模型 {model_id} 已禁用", True
 
@@ -198,6 +204,9 @@ async def _execute_natural_mode(
         debug_info=plugin.config.basic.enable_debug_info,
         stream_id=stream_id,
         chat_id=chat_id,
+        user_id=dctx.user_id,
+        group_id=dctx.group_id,
+        platform=dctx.platform,
         log_prefix=dctx.log_prefix,
         command_message=dctx.message,
         source="cmd_natural",

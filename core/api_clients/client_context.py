@@ -10,7 +10,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    from ...plugin import MaisArtPlugin
 
 
 @dataclass
@@ -37,11 +40,8 @@ class ClientContext:
         self._get = config_getter or (lambda _key, default=None: default)
 
     def get_config(self, key: str, default: Any = None) -> Any:
-        """嵌套 dot-path 配置读取，与旧 BaseAction.get_config 行为一致"""
-        try:
-            return self._get(key, default)
-        except Exception:
-            return default
+        """读取客户端配置；读取错误必须传播，避免悄悄关闭用户的代理。"""
+        return self._get(key, default)
 
     def get_proxy_config(self) -> Optional[dict]:
         """返回 requests/urllib 友好的代理配置（启用时返回 dict，否则 None）"""
@@ -55,7 +55,7 @@ class ClientContext:
 
 
 def build_client_context_from_plugin(
-    plugin: Any,
+    plugin: "MaisArtPlugin",
     *,
     log_prefix: str = "[MaisArt]",
 ) -> ClientContext:
@@ -65,20 +65,9 @@ def build_client_context_from_plugin(
         plugin: 持有 .config.proxy / .get_config 的插件实例
         log_prefix: 日志前缀
     """
-    proxy_cfg = getattr(getattr(plugin, "config", None), "proxy", None)
-    proxy: Optional[ProxyConfig] = None
-    if proxy_cfg is not None:
-        proxy = ProxyConfig(
-            enabled=bool(getattr(proxy_cfg, "enabled", False)),
-            url=str(getattr(proxy_cfg, "url", "http://127.0.0.1:7890") or "http://127.0.0.1:7890"),
-            timeout=int(getattr(proxy_cfg, "timeout", 60) or 60),
-        )
-
-    getter = getattr(plugin, "get_config", None)
-    if not callable(getter):
-        getter = lambda _k, default=None: default
-
-    return ClientContext(log_prefix=log_prefix, proxy=proxy, config_getter=getter)
+    proxy_cfg = plugin.config.proxy
+    proxy = ProxyConfig(enabled=proxy_cfg.enabled, url=proxy_cfg.url, timeout=proxy_cfg.timeout)
+    return ClientContext(log_prefix=log_prefix, proxy=proxy, config_getter=plugin.get_config)
 
 
 def build_client_context_from_extra(

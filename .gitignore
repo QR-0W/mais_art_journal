@@ -15,7 +15,6 @@ config.toml
 .env
 nul
 008.jpg
-requirements.txt
 
 # 忽略特定扩展名的文件（递归）
 **/*.tmp
@@ -28,3 +27,22 @@ test_*
 # 本地备份文件
 *.bak_*
 *.bak
+
+# 本地工具缓存；必要的回归测试与依赖清单进入插件仓库。
+!tests/test_*.py
+.uv-cache/
+.pytest_cache/
+.pytest_tmp_*/
+.venv/
+
+# 本地聊天设置与额度账本，不进入插件源码仓库。
+data/
+
+# 文档只保留 README.md；配置参考、更新说明和示例模板不入库。
+*.md
+!/README.md
+*.example.toml
+*.sample.toml
+*.template.toml
+/model_presets.toml
+/scripts/update_config_reference.py

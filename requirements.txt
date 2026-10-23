@@ -1,0 +1,7 @@
+maibot-plugin-sdk>=2.15.0,<3
+requests>=2.28.0
+Pillow>=10
+pydantic>=2,<3
+tomlkit>=0.12
+tzdata>=2024.1
+# 可选豆包后端：volcengine-python-sdk[ark]（对应 pyproject.toml 的 doubao extra）

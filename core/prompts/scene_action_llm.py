@@ -1,10 +1,15 @@
-"""场景 LLM 生成 + 确定性映射兜底（自动自拍 + 手动自拍日程增强共用）"""
+"""在同一次场景生成中决定动作、服装和构图；关闭优化器时使用明确的活动规则。"""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+import asyncio
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Dict, Optional
+
+from ..selfie.activity_rules import ACTIVITY_OUTFITS, ACTIVITY_STYLES, choose_auto_style, style_candidates
+from .prompt_templates import load_prompt_template
 
 if TYPE_CHECKING:
     from maibot_sdk.context import PluginContext
@@ -14,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("plugin.mais_art_journal.scene_llm")
 
 
-# ==================== 确定性映射（LLM 失败时的兜底） ====================
+# ==================== 确定性映射（关闭 LLM 场景优化时使用） ====================
 
 ACTIVITY_ACTIONS: Dict[str, str] = {
     "sleeping": "lying down, hugging pillow, cozy",
@@ -26,8 +31,12 @@ ACTIVITY_ACTIONS: Dict[str, str] = {
     "relaxing": "lying on couch, relaxed, listening to music",
     "socializing": "making peace sign, happy, laughing",
     "commuting": "holding bag, walking, wearing earbuds",
-    "hobby": "holding camera, creative",
-    "self_care": "applying makeup, mirror",
+    "hobby": "engaged in a creative activity, relaxed posture",
+    "self_care": "adjusting hair with one hand",
+    "cooking": "holding a spatula, preparing food",
+    "shopping": "holding shopping bag, relaxed pose",
+    "gaming": "holding game controller, playing a game",
+    "bathing": "standing in a fully covered bathrobe, relaxed pose",
     "other": "standing, casual pose, natural",
 }
 
@@ -43,6 +52,10 @@ ACTIVITY_ENVIRONMENTS: Dict[str, str] = {
     "commuting": "city street, urban",
     "hobby": "art studio, creative space",
     "self_care": "bathroom, mirror, vanity",
+    "cooking": "kitchen, stove, cooking utensils",
+    "shopping": "clothing store, fitting mirror",
+    "gaming": "living room, television, game console",
+    "bathing": "bathroom, warm indoor atmosphere",
     "other": "indoor, natural lighting",
 }
 
@@ -58,6 +71,10 @@ ACTIVITY_EXPRESSIONS: Dict[str, str] = {
     "commuting": "calm expression",
     "hobby": "excited, passionate",
     "self_care": "gentle smile, self-care",
+    "cooking": "focused smile",
+    "shopping": "cheerful expression",
+    "gaming": "focused, excited expression",
+    "bathing": "relaxed expression",
     "other": "natural smile",
 }
 
@@ -73,75 +90,21 @@ ACTIVITY_LIGHTING: Dict[str, str] = {
     "commuting": "morning sunlight",
     "hobby": "creative studio lighting",
     "self_care": "bathroom lighting, mirror reflection",
+    "cooking": "warm kitchen lighting",
+    "shopping": "bright indoor lighting",
+    "gaming": "soft ambient light",
+    "bathing": "warm bathroom lighting",
     "other": "natural lighting",
 }
 
 
 # ==================== LLM 场景生成 prompt（按风格约束） ====================
 
-_SCENE_LLM_PROMPT_BASE = """You are a selfie scene tag generator for anime image generation (Stable Diffusion).
-Given a character's current activity description, output a JSON object with 4 keys:
-- action: physical pose/gesture/hand position (3-8 English tags)
-- environment: background and surroundings (3-8 English tags)
-- expression: facial expression (2-5 English tags)
-- lighting: light conditions (2-4 English tags)
-
-Rules:
-1. Output ONLY valid JSON, no markdown, no explanations
-2. All values must be English tags suitable for Stable Diffusion
-3. Do NOT include character appearance (hair, eyes, clothing)
-4. Tags should feel natural for the scenario
-5. Keep tags concise and descriptive
-6. IMPORTANT for action: prefer simple, AI-friendly gestures. AVOID complex multi-finger details (e.g. heart shape with hands, interlocked fingers) as they cause generation artifacts"""
-
-_SCENE_STYLE_HINTS = {
-    "standard": """
-7. STYLE CONSTRAINT - Standard selfie (front camera):
-   - ONE hand is holding the phone OFF-SCREEN (invisible, arm extended toward camera)
-   - ONLY ONE hand is visible and free in the frame
-   - Action MUST be a SINGLE-HAND gesture using the free hand only
-   - Examples: peace sign with one hand, touching hair with one hand, hand on chin, waving with one hand
-   - FORBIDDEN: two hands together, both hands visible, hands touching each other, any gesture requiring both hands
-   - The visible hand should be at face/upper body level, natural and relaxed""",
-
-    "mirror": """
-7. STYLE CONSTRAINT - Mirror selfie (reflection):
-   - ONE hand holds the phone (visible in mirror reflection)
-   - ONLY the OTHER hand is free for posing
-   - Action should be single-hand poses suitable for mirror reflection
-   - Examples: hand on hip, adjusting hair with one hand, fixing collar, hand in pocket, hand on waist
-   - FORBIDDEN: both hands free, two-hand gestures, hands together
-   - The free hand should complement the mirror pose naturally""",
-
-    "photo": """
-7. STYLE CONSTRAINT - Third-person photo (external camera):
-   - Someone else is taking the photo, NOT a selfie
-   - Subject's hands are COMPLETELY FREE from any devices
-   - BOTH hands can be used naturally, but prefer calm, elegant poses
-   - Examples: hands at sides, one hand in hair (wind blowing), holding a prop (coffee/book/bag), leaning pose
-   - FORBIDDEN: phone, smartphone, camera, selfie stick in subject's hands; arm extended toward camera; selfie pose
-   - Prefer full-body or upper-body natural poses, avoid exaggerated gestures""",
-}
-
-_SCENE_LLM_EXAMPLES = """
-Examples:
-
-Activity: 在书房看轻小说
-{"action": "holding book, reading, relaxed pose", "environment": "study room, bookshelf, warm interior", "expression": "content smile, absorbed", "lighting": "desk lamp, warm indoor light"}
-
-Activity: 在厨房做早饭
-{"action": "holding spatula, cooking", "environment": "kitchen, stove, morning atmosphere", "expression": "happy smile, focused on cooking", "lighting": "morning light through window, bright kitchen"}
-
-Activity: 在公园散步
-{"action": "walking, casual stroll", "environment": "park, trees, pathway, flowers", "expression": "peaceful smile, relaxed", "lighting": "soft natural sunlight, dappled light"}
-
-Now generate for the following activity:"""
-
-
 def build_scene_llm_prompt(selfie_style: str) -> str:
-    """组装带风格约束的 LLM 场景生成 prompt"""
-    style_hint = _SCENE_STYLE_HINTS.get(selfie_style, _SCENE_STYLE_HINTS["standard"])
-    return f"{_SCENE_LLM_PROMPT_BASE}{style_hint}{_SCENE_LLM_EXAMPLES}"
+    """组装带构图约束的中文模板；英文、日文模板同步随插件分发。"""
+    if selfie_style not in {"auto", "standard", "mirror", "photo"}:
+        raise ValueError(f"无效的自拍构图: {selfie_style}")
+    return load_prompt_template("scene").replace("{{requested_style}}", selfie_style)
 
 
 # ==================== 公共 API ====================
@@ -151,16 +114,47 @@ async def generate_scene_with_llm(
     activity_info: "ActivityInfo",
     selfie_style: str = "standard",
     llm_task: str = "utils",
+    *,
+    outfit: str = "",
+    bot_appearance: str = "",
+    activity_rule: Optional[Dict[str, str]] = None,
+    timeout_seconds: float = 45,
+    recent_styles: Optional[List[str]] = None,
+    photo_description: str = "",
 ) -> Optional[Dict[str, str]]:
-    """LLM 根据活动描述生成英文 SD 场景标签
+    """一次 LLM 调用同时生成场景、服装、身份特征和构图。
 
-    Returns: 包含 hand_action / environment / expression / lighting 的字典，失败返回 None
+    失败显式返回 None，由调用方终止生成，不发布与当前活动不一致的图片。
     """
     try:
-        system_prompt = build_scene_llm_prompt(selfie_style)
-        prompt = f"{system_prompt}\n\nActivity: {activity_info.description}"
+        system_prompt = await asyncio.to_thread(build_scene_llm_prompt, selfie_style)
+        rule = get_action_for_activity(activity_info, activity_rule=activity_rule, recent_styles=recent_styles)
+        payload = {
+            "activity_type": activity_info.activity_type.value,
+            "activity": activity_info.description,
+            "location": activity_info.location,
+            "scene": activity_info.scene,
+            "time_window": activity_info.time_window,
+            "as_of": activity_info.as_of,
+            "timezone": activity_info.timezone,
+            "current_time": activity_info.current_time(),
+            "photo_description": photo_description,
+            "requested_style": selfie_style,
+            "activity_style": rule["selfie_style"],
+            "allowed_styles": style_candidates(activity_info) if selfie_style == "auto" else [selfie_style],
+            "recent_styles": (recent_styles or [])[-6:],
+            "outfit": outfit or activity_info.outfit or rule["outfit"],
+            "character_appearance": bot_appearance,
+        }
 
-        result = await ctx.llm.generate(prompt=prompt, model=llm_task, temperature=0.7, max_tokens=8192)
+        result = await ctx.llm.generate(
+            prompt=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            model=llm_task, temperature=0.7, max_tokens=2048,
+            timeout_ms=int(timeout_seconds * 1000),
+        )
 
         success, response, model_name = False, "", ""
         if isinstance(result, dict):
@@ -178,38 +172,59 @@ async def generate_scene_with_llm(
             cleaned = re.sub(r"\s*```$", "", cleaned)
 
         scene = json.loads(cleaned)
-        required_keys = {"action", "environment", "expression", "lighting"}
-        if not required_keys.issubset(scene.keys()):
-            logger.warning(f"LLM 场景缺少字段: {required_keys - set(scene.keys())}")
+        required_keys = {"action", "environment", "expression", "lighting", "outfit", "selfie_style", "character_identity"}
+        if not isinstance(scene, dict):
+            raise ValueError("场景 LLM 必须返回 JSON 对象")
+        # 七字段旧结构继续接受；新模板将媒介/画风独立输出，避免在环境描述中丢失。
+        allowed_keys = required_keys | {"visual_style"}
+        if not required_keys.issubset(scene) or set(scene) - allowed_keys:
+            logger.warning("LLM 场景字段不符合约定：缺少=%s，多余=%s", required_keys - set(scene), set(scene) - allowed_keys)
             return None
 
         for key in required_keys:
-            if not isinstance(scene[key], str) or not scene[key].strip():
+            if not isinstance(scene[key], str) or len(scene[key]) > 1000 or (key != "character_identity" and not scene[key].strip()):
                 logger.warning(f"LLM 场景字段 {key} 无效: {scene.get(key)}")
                 return None
 
-        logger.info(f"LLM 场景生成成功 (模型: {model_name}): action={scene['action'][:50]}")
+        style = scene["selfie_style"].strip()
+        if style not in payload["allowed_styles"]:
+            raise ValueError(f"场景构图 {style!r} 不符合本轮场景允许的构图")
+        if bot_appearance and not scene["character_identity"].strip():
+            raise ValueError("场景 LLM 丢失了角色身份特征")
+        visual_style = scene.get("visual_style", "")
+        if not isinstance(visual_style, str) or len(visual_style) > 300:
+            raise ValueError("场景 LLM 返回无效画风")
+        logger.info(f"LLM 场景生成成功 (模型: {model_name}): style={style}")
         return {
             "hand_action": scene["action"],
             "environment": scene["environment"],
             "expression": scene["expression"],
             "lighting": scene["lighting"],
+            "outfit": outfit or activity_info.outfit or scene["outfit"].strip(),
+            "selfie_style": style,
+            "character_identity": scene["character_identity"].strip(),
+            "visual_style": visual_style.strip(),
         }
 
     except json.JSONDecodeError as e:
         logger.warning(f"LLM 场景 JSON 解析失败: {e}")
         return None
     except Exception as e:
-        logger.error(f"LLM 场景生成异常: {e}")
+        logger.exception(f"LLM 场景生成异常: {e}")
         return None
 
 
-def get_action_for_activity(activity_info: "ActivityInfo") -> Dict[str, str]:
-    """LLM 失败时的确定性场景兜底（手动自拍日程增强用）"""
+def get_action_for_activity(
+    activity_info: "ActivityInfo", *, activity_rule: Optional[Dict[str, str]] = None,
+    recent_styles: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """关闭 LLM 优化时使用的确定性场景，服装与构图遵循同一配置来源。"""
     key = activity_info.activity_type.value
     return {
         "hand_action": ACTIVITY_ACTIONS.get(key, ACTIVITY_ACTIONS["other"]),
-        "environment": ACTIVITY_ENVIRONMENTS.get(key, ACTIVITY_ENVIRONMENTS["other"]),
+        "environment": activity_info.location or ACTIVITY_ENVIRONMENTS.get(key, ACTIVITY_ENVIRONMENTS["other"]),
         "expression": ACTIVITY_EXPRESSIONS.get(key, ACTIVITY_EXPRESSIONS["other"]),
         "lighting": ACTIVITY_LIGHTING.get(key, ACTIVITY_LIGHTING["other"]),
+        "outfit": activity_info.outfit or (activity_rule["outfit"] if activity_rule else ACTIVITY_OUTFITS[activity_info.activity_type]),
+        "selfie_style": choose_auto_style(activity_info, activity_rule["selfie_style"] if activity_rule else ACTIVITY_STYLES[activity_info.activity_type], recent_styles),
     }

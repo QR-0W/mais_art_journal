@@ -7,8 +7,10 @@
 4. 提示词构建器
 5. 自拍提示词生成
 """
-import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import sys
 
 # 添加插件路径到 sys.path
 plugin_dir = Path(__file__).parent.parent
@@ -20,25 +22,13 @@ def test_config_loading():
     try:
         from core.config.models import MaisArtConfig
 
-        # 兼容 Python 3.11+ (tomllib) 和 3.10- (tomli)
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
-
-        config_path = plugin_dir / "config.toml"
-        if not config_path.exists():
-            print("  ❌ config.toml 不存在")
-            return False
-
-        with open(config_path, "rb") as f:
-            config_dict = tomllib.load(f)
-
-        config = MaisArtConfig(**config_dict)
-        print(f"  ✅ 配置加载成功")
+        # 使用当前 SDK 的默认配置快照，避免依赖本机账号配置。
+        plugin = _load_plugin_module().MaisArtPlugin()
+        config = MaisArtConfig.model_validate(plugin.get_default_config())
+        print("  ✅ 配置加载成功")
         print(f"     - 插件名称: {config.plugin.name}")
         print(f"     - 配置版本: {config.plugin.config_version}")
-        print(f"     - 默认模型: {config.basic.default_model}")
+        print(f"     - 默认文生图模型: {config.basic.default_txt2img_model or 'model1'}")
         print(f"     - 模型数量: {len(config.models.items)}")
         print(f"     - 风格数量: {len(config.styles.items)}")
         return True
@@ -56,55 +46,21 @@ def test_model_registry():
         from core.config.model_registry import model_exists
         from core.config.models import MaisArtConfig
 
-        # 兼容 Python 3.11+ (tomllib) 和 3.10- (tomli)
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
-
-        config_path = plugin_dir / "config.toml"
-        with open(config_path, "rb") as f:
-            config_dict = tomllib.load(f)
-        config = MaisArtConfig(**config_dict)
-
-        # 创建一个模拟的 plugin 对象
-        class MockPlugin:
-            def __init__(self, cfg):
-                self.config = cfg
-
-            def get_config(self, key, default=None):
-                """模拟 plugin.get_config 方法"""
-                parts = key.split(".")
-                obj = self.config
-
-                for part in parts:
-                    if hasattr(obj, part):
-                        obj = getattr(obj, part)
-                    elif isinstance(obj, dict) and part in obj:
-                        obj = obj[part]
-                    else:
-                        return default
-
-                # 如果是 Pydantic 模型，转换为字典
-                if hasattr(obj, "model_dump"):
-                    return obj.model_dump(mode="python")
-
-                return obj
-
-        plugin = MockPlugin(config)
+        # 注册表只读取当前强类型配置。
+        plugin = SimpleNamespace(config=MaisArtConfig())
 
         # 测试存在的模型
         if model_exists(plugin, "model1"):
-            print(f"  ✅ model1 存在")
+            print("  ✅ model1 存在")
         else:
-            print(f"  ❌ model1 应该存在但检测不到")
+            print("  ❌ model1 应该存在但检测不到")
             return False
 
         # 测试不存在的模型
         if not model_exists(plugin, "model999"):
-            print(f"  ✅ model999 不存在（正确）")
+            print("  ✅ model999 不存在（正确）")
         else:
-            print(f"  ❌ model999 不应该存在")
+            print("  ❌ model999 不应该存在")
             return False
 
         return True
@@ -122,48 +78,14 @@ def test_style_registry():
         from core.config.style_registry import resolve_style_alias, get_style_prompt
         from core.config.models import MaisArtConfig
 
-        # 兼容 Python 3.11+ (tomllib) 和 3.10- (tomli)
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib
-
-        config_path = plugin_dir / "config.toml"
-        with open(config_path, "rb") as f:
-            config_dict = tomllib.load(f)
-        config = MaisArtConfig(**config_dict)
-
-        class MockPlugin:
-            def __init__(self, cfg):
-                self.config = cfg
-
-            def get_config(self, key, default=None):
-                """模拟 plugin.get_config 方法"""
-                parts = key.split(".")
-                obj = self.config
-
-                for part in parts:
-                    if hasattr(obj, part):
-                        obj = getattr(obj, part)
-                    elif isinstance(obj, dict) and part in obj:
-                        obj = obj[part]
-                    else:
-                        return default
-
-                # 如果是 Pydantic 模型，转换为字典
-                if hasattr(obj, "model_dump"):
-                    return obj.model_dump(mode="python")
-
-                return obj
-
-        plugin = MockPlugin(config)
+        plugin = SimpleNamespace(config=MaisArtConfig())
 
         # 测试风格解析
         style = resolve_style_alias(plugin, "cartoon")
         if style == "cartoon":
-            print(f"  ✅ cartoon 风格解析成功")
+            print("  ✅ cartoon 风格解析成功")
         else:
-            print(f"  ❌ cartoon 风格解析失败")
+            print("  ❌ cartoon 风格解析失败")
             return False
 
         # 测试风格提示词
@@ -171,15 +93,15 @@ def test_style_registry():
         if prompt and len(prompt) > 0:
             print(f"  ✅ cartoon 风格提示词获取成功: {prompt[:50]}...")
         else:
-            print(f"  ❌ cartoon 风格提示词获取失败")
+            print("  ❌ cartoon 风格提示词获取失败")
             return False
 
         # 测试不存在的风格
         unknown = resolve_style_alias(plugin, "unknown_style_xyz")
         if unknown is None:
-            print(f"  ✅ unknown_style_xyz 不存在（正确）")
+            print("  ✅ unknown_style_xyz 不存在（正确）")
         else:
-            print(f"  ❌ unknown_style_xyz 不应该存在")
+            print("  ❌ unknown_style_xyz 不应该存在")
             return False
 
         return True
@@ -222,18 +144,18 @@ def test_selfie_prompt_builder():
         # 测试手部提示词构建
         hand_prompt = build_hand_prompt_for_style("peace sign with one hand", "standard")
         if hand_prompt and "phone" in hand_prompt.lower():
-            print(f"  ✅ standard 手部提示词包含 phone 关键词")
+            print("  ✅ standard 手部提示词包含 phone 关键词")
         else:
-            print(f"  ❌ standard 手部提示词构建失败")
+            print("  ❌ standard 手部提示词构建失败")
             return False
 
         # 测试 sanitize（清洗冲突关键词）
         dirty = "holding phone with both hands"
         clean = sanitize_hand_action_for_style(dirty, "standard")
         if clean != dirty:
-            print(f"  ✅ sanitize 成功清洗冲突关键词")
+            print("  ✅ sanitize 成功清洗冲突关键词")
         else:
-            print(f"  ⚠️  sanitize 未清洗冲突关键词（可能是预期行为）")
+            print("  ⚠️  sanitize 未清洗冲突关键词（可能是预期行为）")
 
         return True
     except Exception as e:
@@ -278,7 +200,7 @@ def test_imports():
 
 
 def _load_plugin_module():
-    """以绝对包路径加载 plugin.py，绕过其内部的 `from .core ...` 相对 import"""
+    """按宿主使用的包路径加载 plugin.py，正确解析相对导入。"""
     parent_dir = plugin_dir.parent
     package_name = plugin_dir.name
     sys.path.insert(0, str(parent_dir))
@@ -292,8 +214,8 @@ def test_command_pattern():
         import re
         MaisArtPlugin = _load_plugin_module().MaisArtPlugin
 
-        info = getattr(MaisArtPlugin.handle_dr, "__maibot_component_info__", None)
-        pattern = getattr(info, "command_pattern", "") if info else ""
+        command = next(component for component in MaisArtPlugin().get_components() if component["name"] == "dr")
+        pattern = command["metadata"]["command_pattern"]
         if not pattern:
             print("  ❌ 取不到 handle_dr 的 command_pattern")
             return False

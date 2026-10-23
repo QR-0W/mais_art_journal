@@ -28,7 +28,8 @@ class ResolveSize(BaseStep):
             llm_size=req.size or None,
             log_prefix=req.log_prefix,
             ctx=ctx.plugin.ctx,
-            llm_task=ctx.plugin.config.basic.llm_task_name or "utils",
+            llm_task=ctx.plugin.config.basic.llm_task_name,
+            timeout_seconds=ctx.plugin.config.basic.llm_timeout_seconds,
         )
 
         if not validate_image_size(image_size):

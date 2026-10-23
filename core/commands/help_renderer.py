@@ -5,7 +5,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..config import get_model_config, resolve_img2img_model, resolve_txt2img_model
-from ..state import runtime_state
 from .registry import CommandResult
 
 if TYPE_CHECKING:
@@ -25,6 +24,7 @@ async def render_help(dctx: "DispatcherContext") -> CommandResult:
         f"• {prefix} styles - 列出所有可用风格",
         f"• {prefix} list - 查看所有模型",
         f"• {prefix} config - 查看当前配置",
+        f"• {prefix} quota - 查看本聊天额度",
     ]
     if dctx.is_admin:
         lines.extend([
@@ -33,11 +33,14 @@ async def render_help(dctx: "DispatcherContext") -> CommandResult:
             f"• {prefix} model on|off <模型ID> - 开关模型",
             f"• {prefix} recall on|off <模型ID> - 开关撤回",
             f"• {prefix} selfie on|off - 开关自拍日程增强",
-            f"• {prefix} selfie standard|mirror|photo - 切换自拍风格",
+            f"• {prefix} selfie auto|standard|mirror|photo - 切换自拍风格",
             f"• {prefix} default <模型ID> - 设置默认模型",
             f"• {prefix} set <模型ID> - 设置命令模型",
             f"• {prefix} style <风格名> - 查看风格详情",
             f"• {prefix} reset - 重置所有配置",
+            f"• {prefix} quota adjust <加减数> - 调整本聊天额度",
+            f"• {prefix} quota pending - 查看待核对的额度记录",
+            f"• {prefix} quota resolve <记录ID> sent|refund - 确认发送或退回额度",
         ])
     lines.extend([
         "\n💡 使用流程：",
@@ -61,19 +64,19 @@ async def render_current_config(dctx: "DispatcherContext") -> CommandResult:
     global_command_model = plugin.config.basic.pic_command_model
     global_plugin_enabled = plugin.config.plugin.enabled
 
-    plugin_enabled = runtime_state.is_plugin_enabled(chat_id, global_plugin_enabled)
+    plugin_enabled = plugin.runtime_state.is_plugin_enabled(chat_id, global_plugin_enabled)
     # 聊天流级覆盖优先；未覆盖时展示按模式拆分的全局默认
-    action_override = runtime_state.get_action_default_model(chat_id, "")
+    action_override = plugin.runtime_state.get_action_default_model(chat_id, "")
     txt2img_model = action_override or global_txt2img
     img2img_model = action_override or global_img2img
-    command_model = runtime_state.get_command_default_model(chat_id, global_command_model)
-    disabled_models = runtime_state.get_disabled_models(chat_id)
-    recall_disabled = runtime_state.get_recall_disabled_models(chat_id)
+    command_model = plugin.runtime_state.get_command_default_model(chat_id, global_command_model)
+    disabled_models = plugin.runtime_state.get_disabled_models(chat_id)
+    recall_disabled = plugin.runtime_state.get_recall_disabled_models(chat_id)
 
     global_schedule = plugin.config.selfie.schedule_enabled
-    selfie_schedule = runtime_state.is_selfie_schedule_enabled(chat_id, global_schedule)
+    selfie_schedule = plugin.runtime_state.is_selfie_schedule_enabled(chat_id, global_schedule)
     global_style = plugin.config.selfie.default_style
-    selfie_style = runtime_state.get_selfie_style(chat_id, global_style)
+    selfie_style = plugin.runtime_state.get_selfie_style(chat_id, global_style)
 
     txt2img_cfg = get_model_config(plugin, txt2img_model)
     img2img_cfg = get_model_config(plugin, img2img_model)
@@ -84,8 +87,15 @@ async def render_current_config(dctx: "DispatcherContext") -> CommandResult:
             return "未知"
         return cfg.get("name", cfg.get("model", "未知"))
 
+    if dctx.group_name:
+        chat_name = dctx.group_name
+    elif dctx.user_nickname:
+        chat_name = f"{dctx.user_nickname} 的私聊"
+    else:
+        chat_name = "当前聊天流"
+
     lines = [
-        f"⚙️ 当前聊天流配置 (ID: {chat_id[:8]}...)：\n",
+        f"⚙️ {chat_name}配置：\n",
         f"🔌 插件状态: {'✅ 启用' if plugin_enabled else '❌ 禁用'}",
         f"⌨️ 命令前缀: {prefix}",
     ]

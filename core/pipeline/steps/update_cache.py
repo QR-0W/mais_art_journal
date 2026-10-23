@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional
 
+from ...utils.cache_manager import request_cache_identity
 from ..result import StepResult
 from ..step import BaseStep
 
@@ -24,7 +25,7 @@ class UpdateCache(BaseStep):
         if not req.resolved_image_data or not req.resolved_model_config:
             return None
 
-        model_name = req.resolved_model_config.get("model", "default-model")
+        model_name = request_cache_identity(req.resolved_model_config, req.description, req.input_image_base64)
         try:
             ctx.cache.cache_result(
                 req.description, model_name, req.final_size,
