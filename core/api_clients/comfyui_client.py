@@ -34,7 +34,7 @@ from typing import Dict, Any, Tuple, Optional
 
 from PIL import Image
 
-from .base_client import BaseApiClient, logger
+from .base_client import BaseApiClient, NonRetryableError, logger
 
 
 class ComfyUIClient(BaseApiClient):
@@ -53,7 +53,8 @@ class ComfyUIClient(BaseApiClient):
             opener = urllib.request.build_opener(proxy_handler)
             timeout = proxy_config.get('timeout', 120)
         else:
-            opener = urllib.request.build_opener()
+            # 显式禁用环境变量代理（HTTP_PROXY/HTTPS_PROXY），确保 proxy.enabled=false 时直连
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             timeout = 120
         return opener, timeout
 
@@ -160,6 +161,9 @@ class ComfyUIClient(BaseApiClient):
                 workflow_template = f.read()
         except Exception as e:
             return False, f"读取工作流文件失败: {e}"
+
+        if input_image_base64 and '"${image}"' not in workflow_template:
+            raise NonRetryableError("ComfyUI 工作流缺少 ${image} 占位符，无法使用必需参考图，本次未提交")
 
         # ---- 1.5 提交前去重检查（提前到上传之前，避免排队时白白上传图片）----
         # 若队列中已有本机器人正在排队/运行的任务，说明上一次任务还没轮到，

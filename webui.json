@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "required_capabilities": ["declarative_basic"],
+  "pages": [{
+    "id": "selfie-test",
+    "title": "人设自拍联调",
+    "description": "管理员单次真实测试，生成可能计费，发布操作会外发QQ空间。",
+    "mode": "declarative",
+    "queries": {"status": {"api": "selfie_test_status"}},
+    "actions": {
+      "preview": {
+        "api": "start_selfie_preview",
+        "confirmation": "确认生成一次当前日程人设自拍？可能计费，仅保存本地，不发聊天或空间。"
+      },
+      "publish": {
+        "api": "start_selfie_publication",
+        "confirmation": "确认使用当前默认模型生成一张真实日程自拍并向MaiTrace当前登录QQ空间发布？可能计费且公开可见，失败不自动重试。请先确认账号与参考图。"
+      },
+      "publish_preview": {
+        "api": "start_preview_publication",
+        "parameters": {
+          "expected_sha256": {"type": "string", "required": true, "max_length": 64},
+          "expected_qq": {"type": "string", "required": true},
+          "message": {"type": "string", "required": true}
+        },
+        "confirmation": "确认向MaiTrace当前登录QQ空间发布摘要匹配的本地预览图及已确认正文？请先核对账号。可能公开可见，不重新生图、不重试、不替换图片。"
+      }
+    },
+    "content": [
+      {"type": "text", "value": "先在配置表单设置有效的默认模型密钥和人设图。没有当前真实活动时跳过，不编造日程。自动调度须关闭才能手动联调。"},
+      {"type": "stat", "label": "阶段", "value": {"scope": "query", "source": "status", "field": "stage"}},
+      {"type": "stat", "label": "状态", "value": {"scope": "query", "source": "status", "field": "status"}},
+      {"type": "text", "label": "最近结果", "value": {"scope": "query", "source": "status", "field": "message"}},
+      {"type": "button", "label": "单次本地预览", "action": "preview"},
+      {"type": "button", "label": "生成并发布一次QQ空间", "action": "publish", "variant": "danger"}
+    ],
+    "auto_refresh": true,
+    "poll_interval_seconds": 3
+  }]
+}

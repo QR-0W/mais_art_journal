@@ -27,7 +27,7 @@ class PluginSection(PluginConfigBase):
         json_schema_extra={"label": "插件名称", "disabled": True, "order": 1},
     )
     config_version: str = Field(
-        default="4.2.0",
+        default="4.4.2",
         description="插件配置版本号",
         json_schema_extra={"label": "配置版本", "disabled": True, "order": 2},
     )
@@ -92,6 +92,18 @@ class BasicSection(PluginConfigBase):
             "placeholder": "model2",
             "order": 11,
         },
+    )
+
+    default_generation_model: str = Field(
+        default="",
+        description="普通自然语言绘图／编辑的全局默认模型 ID；不读取聊天流偏好，不按场景切换。留空时需要本次明确指定模型。",
+        json_schema_extra={"label": "普通绘图全局默认模型", "order": 12},
+    )
+    max_output_images: int = Field(
+        default=1,
+        ge=1,
+        description="普通绘图单次请求的全局输出上限，还受所选模型单次原生输出上限约束；超限拒绝，不拆单。",
+        json_schema_extra={"label": "普通绘图输出上限", "order": 13},
     )
 
     # ---- 组件启用 ----
@@ -219,7 +231,7 @@ class SelfieSection(PluginConfigBase):
     )
     reference_image_path: str = Field(
         default="",
-        description="自拍参考图片路径（相对插件目录或绝对路径）。配置后自动用图生图模式，模型不支持时自动回退",
+        description="自拍必需的人设图片路径（相对插件目录或绝对路径）；缺图或模型不支持参考图即失败，不降级文生图。",
         json_schema_extra={
             "label": "参考图片",
             "placeholder": "images/reference.png",
@@ -275,6 +287,32 @@ class SelfieSection(PluginConfigBase):
         },
     )
 
+    art_style: str = Field(
+        default="",
+        description="自拍独立画风；留空不追加画风。本次用户明确指定画风可临时覆盖，不替换人设图。",
+        json_schema_extra={"label": "自拍默认画风", "order": 9},
+    )
+    daily_count: int = Field(
+        default=1, ge=1,
+        description="自动自拍每日计划次数。等分允许时段，每段随机一次；失败或缺日程不补足次数。",
+        json_schema_extra={"label": "每日计划次数", "order": 26},
+    )
+    window_start: str = Field(
+        default="07:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="自动自拍允许时段起点 HH:MM，与终点相同时表示全天。",
+        json_schema_extra={"label": "允许时段开始", "order": 27},
+    )
+    window_end: str = Field(
+        default="23:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="自动自拍允许时段终点 HH:MM；早于起点时跨午夜。",
+        json_schema_extra={"label": "允许时段结束", "order": 28},
+    )
+    time_zone: str = Field(
+        default="Asia/Shanghai",
+        description="自动调度所用 IANA 时区。",
+        json_schema_extra={"label": "调度时区", "order": 29},
+    )
+
     # ---- 自动自拍 ----
     auto_enabled: bool = Field(
         default=False,
@@ -285,7 +323,7 @@ class SelfieSection(PluginConfigBase):
         default=120,
         ge=10,
         le=1440,
-        description="自动自拍间隔（分钟），建议 60-240",
+        description="旧链路间隔字段，S2 自动调度改用 daily_count 与 window_start/window_end，不再使用固定间隔。",
         json_schema_extra={
             "label": "自动自拍间隔",
             "depends_on": "selfie.auto_enabled",
@@ -295,8 +333,7 @@ class SelfieSection(PluginConfigBase):
     )
     selfie_model: str = Field(
         default="",
-        description="自动自拍使用的模型 ID。留空时依次回退到「普通自拍模型」、"
-        "「默认图生图模型」、内置 model1。自动自拍必然携带参考图，应填图生图模型",
+        description="旧链路模型字段，S2 自拍统一使用全局默认或本次显式模型；不再读取此字段自动改选。",
         json_schema_extra={
             "label": "自动自拍模型",
             "placeholder": "model2",
@@ -307,12 +344,10 @@ class SelfieSection(PluginConfigBase):
     )
     llm_selfie_model: str = Field(
         default="",
-        description="普通自拍（聊天中用自然语言要自拍）使用的模型 ID。"
-        "自拍必然携带参考图、走图生图，通常应填图生图模型。留空则依次回退到"
-        "「默认图生图模型」→「默认文生图模型」",
+        description="旧自拍默认字段，S2 手动自拍统一使用全局默认或本次显式模型；不再按场景回退。",
         json_schema_extra={
             "label": "普通自拍模型",
-            "hint": "留空=使用默认图生图模型；自拍走图生图，建议填图生图模型",
+            "hint": "S2 使用 basic.default_generation_model，此旧字段不控制新自拍",
             "placeholder": "model2",
             "depends_on": "selfie.enabled",
             "depends_value": True,
@@ -569,6 +604,23 @@ class ModelConfig(PluginConfigBase):
         default=True,
         description="该模型是否支持图生图功能",
         json_schema_extra={"label": "支持图生图", "group": "prompts", "order": 15},
+    )
+    image_input_mode: Literal["disabled", "json_image", "multipart_edit"] = Field(
+        default="disabled",
+        description="参考图协议：json_image 为 generations 的 JSON 扩展；multipart_edit 为标准 images/edits 表单。只能依据实际服务契约启用。",
+        json_schema_extra={"label": "普通绘图参考图协议", "group": "connection", "order": 16},
+    )
+    max_reference_images: int = Field(
+        default=0,
+        ge=0,
+        description="管理员依据此模型真实契约声明的单次参考图上限；0 表示普通链路未启用参考图，不从型号名称猜测。",
+        json_schema_extra={"label": "单次参考图上限", "group": "connection", "order": 17},
+    )
+    max_output_images: int = Field(
+        default=1,
+        ge=1,
+        description="普通链路的模型输出上限，必须不超过接口单次原生能力；与全局上限共同约束，不用于多次调用凑数。",
+        json_schema_extra={"label": "模型单次输出上限", "group": "connection", "order": 18},
     )
     auto_recall_delay: int = Field(
         default=0,

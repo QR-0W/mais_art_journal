@@ -2,7 +2,80 @@
 
 基于 MaiBot SDK 2.x 的智能多模型图片生成插件，支持文生图和图生图自动识别。兼容 OpenAI、OpenAI-Chat、豆包（火山方舟）、Gemini、魔搭、硅基流动、砂糖云、梦羽、智谱 GLM、阿里百炼 DashScope（通义千问/万相/Z-Image/可灵）、ComfyUI 等多种 API 格式。提供命令式风格转换、自拍模式、自动自拍发说说、日程感知、模型配置管理、运行时聊天流隔离状态、对外 @API 生图接口等功能。
 
-## ✨ 主要特性
+## 4.4.2：手动日程空段与已确认预览发布
+
+- 手动自拍遇日程 API 故障时，保留空 XML 日程段继续本次创作，并返回安全告警；不把用户场景写成真实日程。自动自拍及基于真实日程的管理员预览仍在故障或无活动时停止。
+- 新增私有管理 API `start_preview_publication` 及 `publish_preview` 页面绑定。调用方必须明确给出 `expected_sha256`、`expected_qq` 和 `message`。只读取摘要一致的已生成预览并调用一次发布，不重新生图或替换内容；提交异常／取消报告未知，不自动重试。该接口与旧的「生成并发布」按钮用途不同。
+- 已确认图文发布依赖 MaiTrace 的独立接口 `send_feed_checked_api`。提供针对官方 6.2.4（`d51bdb3`）的[最小目标账号守卫补丁](<patches/maitrace-expected-account.patch>)：从实际 publisher 取得 QQ，匹配批准目标后才提交。原 `send_feed_api` 保持兼容；新接口不存在时不会回退到旧接口。
+- 私有 API 不实现通用幂等框架，单次运维任务仍需在请求前记录审批消耗。管理网关要求正式登录和确认；调用方需核对账号并在未知时停止，不得以重发核验结果。
+- 本轮真实协议验证：GPT Image 2.5 接受双参考 multipart，但请求 2 张仅返回 1 张，计部分结果且不补图；Seedream Lite 单参考单输出成功；Seedream Pro 返回 HTTP 400／`InvalidParameter`，未重试。不据此扩大未核实的生产原生输出上限。
+
+下方 4.4.1／4.4.0／4.3.0 为阶段记录，不代表当前安装实例的凭据或验收状态。聊天投递、随机调度、真实空间发布与各供应商能力分别验收，不以本地预览成功代替全部闭环。
+
+## 4.4.1：隔离修复与选择性上游合并
+
+本地版本保留 S1/S2 已确认规则，从官方 4.6.3（`cafd4ea`）选择合并兼容的客户端修复，并非完整升级到 4.6.3。合并明细与未采用范围见 [UPSTREAM_MERGE.md](<UPSTREAM_MERGE.md>)。
+
+- 日程 API 故障、无效快照与真实无活动分开：前两项明确失败，只有 `has_activity=false` 才跳过。手动创作在真实无活动时仍可使用空日程段。
+- 默认布尔发送回执仅 `True` 计入成功，失败字典和其他真值不计成功，不补图。
+- ComfyUI 必需参考图缺少工作流占位符时，在上传、排队与提交前明确拒绝，不触发重试。长轮询配置及外层时限调整未合入，旧链路全调用预算仍需独立整改。
+- 配置读取异常向上传播，禁止悄悄切换直连或默认参数。保留本地 SDK 上下文兼容修复。
+- 承接上游 AGPL-3.0-or-later 授权，完整文本见 [LICENSE](<LICENSE>)，原 MIT 通知保存在 [LICENSE.MIT](<LICENSE.MIT>)。
+
+代码首先在运行目录外合并和测试；部署状态与真实调用结果另行记录。不会因这次合并开启长期自动调度。
+
+## 4.4.0：人设自拍与单次发布
+
+S2 已在普通生成之外接入手动人设自拍、自动自拍与管理员联调页。下面 4.3.0 小节保留首切片历史边界，本节为当前状态。
+
+- **GPT Image 2.5 已真实验证**：同站正式地址 `https://api.dubstefu.com/v1`，文生图一次返回一张；标准 `/images/edits` multipart 上传人设图也一次返回一张。测试只保存本地，没有发布。两次实测分别约 26 秒和 39 秒，不作为固定耗时保证。临时 Key 只在内存使用，未写入配置。
+- **实际默认已设为 `gpt_image_25`**：wire 为 `gpt-image-2.5`、`format=openai`、`image_input_mode=multipart_edit`、参考与输出上限均为 1。新模型 `api_key` 留空，管理员需在 WebUI 填入可长期使用的 Key 后重载；旧 `gpt_image_2` 及其凭据未覆盖。尚未在运行中的 Host 重载验证，直接脚本实测成功不能代替宿主端到端验收。
+- **人设图必需**：路径由 `selfie.reference_image_path` 指定。新自拍不接受缺图降级；模型不支持参考图时明确失败，不自动换模。人设图排在第一张，用户额外引用随后保持顺序。XML 分别承载身份、画风、真实日程、用户要求和构图；日程为空时保持空段。场景约束交给生成提示词，尚无独立语义冲突分类器。
+- **手动自拍只回原聊天**：`selfie_mode=true` 时走新服务，必须有真实 `stream_id`。没取得当前活动仍可按用户创作要求生成，不把创作要求写成日程。`selfie.art_style` 为独立默认画风，用户明确本次覆盖时填写 Tool `art_style`，不修改配置。旧 `strength/free_hand_action` 不再用于新自拍，动作写入 `description`。
+- **火山原生契约已接通**：管理员显式选择 `format=doubao`，图片输入设 `json_image`，按真实契约声明数量上限。单图用 `sequential_image_generation=disabled`，多图用 `auto` 与 `sequential_image_generation_options.max_images`，不传 HTTP `n`。`max_images` 是上限，不保证恰好张数，返回少时不补。保留已配置的 Lite/Pro wire，不固定型号或域名分支。尚未真实调用火山，精确版本的最大参考数、尺寸与账号权限仍待核，不能凭名称拉高上限。
+- **自动自拍与空间发布绑定**：`selfie.daily_count/window_start/window_end/time_zone` 控制每日等分随机计划，替代旧固定间隔。计划及消费状态保存于 SDK 插件数据目录，重启跳过已错过触发点，不补排。触发时只取规划 API 当前快照，API 失败不读旧数据库兜底；没活动就跳过。生成一张人设自拍、生成配文后，只调用一次 MaiTrace `send_feed_api`。生成未知、失败、配文失败、发布失败或未知均不重试；不预检 MaiTrace 业务可用性。自动开关当前仍为关闭。
+- **管理员单次联调**：在 MaiBot 官方 WebUI 重载插件后打开「人设自拍联调」。本地预览只保存文件；「生成并发布一次QQ空间」有二次确认，会生成并公开发布。后台执行，页面查询真实阶段，不因网关等待超时再次提交。测试期间关闭长期调度；卸载会取消并等待测试任务。该页声明已通过当前 Host schema v2 校验，实际挂载及登录账号仍需现场验证。
+
+发布端优先选 [MaiTrace](<https://github.com/Rabbit-Jia-Er/MaiTrace>) 的 [send_feed_api](<https://github.com/Rabbit-Jia-Er/MaiTrace/blob/main/handlers/apis.py>)，仅接收绘卷准备好的正文和纯 Base64 图片；它自己的自主发布、浏览及生活主动行为应关闭。不会调用 `publish_topic_api` 再次生成配图。
+
+当前 194 项离线集成用例通过，覆盖协议、手动人设、自动调度与发布阶段。真实 QQ 空间发布、Host 重载后的原聊天投递尚未验收。命名模板、旧入口清理／迁移、上下文外旧回复、完整自定义管理界面仍未交付。
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 uv run --no-sync --offline python -m pytest \
+  --rootdir=plugins/1021143806.mais_art_journal/tests \
+  --confcutdir=plugins/1021143806.mais_art_journal/tests --import-mode=importlib \
+  plugins/1021143806.mais_art_journal/tests/{generation,ark_protocol,selfie,publication}_test.py \
+  -q -p no:cacheprovider
+```
+
+## 4.3.0 首切片历史：普通自然语言多图链路
+
+普通 `draw_picture` 已分流到独立链路：显式 `operation=generate` 文生图，或 `operation=edit` 配合有序 `references=[{"source_id": "可见消息编号", "index": 0}]` 编辑。模型从本轮可见内容选择全部素材，插件只通过 SDK 按引用读取；缺图或不支持就结束，不扫描历史、不丢图转文生图。上下文之外的明确旧回复仍未完成，不作为本切片已支持能力。
+
+管理员在 WebUI 的 SDK 配置表单中设置：
+
+| 字段 | 普通链路用途 |
+|---|---|
+| `basic.default_generation_model` | 未显式选模时唯一使用的全局默认 ID；留空时报配置错误，不继承聊天流或旧场景默认 |
+| `basic.max_output_images` | 本次请求的全局张数上限，初值 1 |
+| `models.items[].format` | 本切片选择 `openai`，不把旧 `dashscope` 原生协议自动当作兼容模式 |
+| `models.items[].image_input_mode` | 经核对支持 `/images/generations` JSON `image` 扩展时设 `json_image`，默认 `disabled` |
+| `models.items[].max_reference_images` | 管理员按原生契约声明的参考图上限，初值 0，不猜测平台能力 |
+| `models.items[].max_output_images` | 依据原生单次能力填写的模型输出上限，初值 1，与全局上限取较小值 |
+
+服务根地址／生成完整入口、密钥和真实模型标识继续使用各模型的 `base_url`、`api_key`、`model`。本链路不按商家域名选分支，不固定型号枚举；兼容接口的 multipart 编辑和其他未核协议暂不支持。百炼 `qwen-image-3.0-pro` 仅作资料与离线样本，可按已读兼容契约配置参考上限 3、模型输出上限 6，但仍需同地域地址与密钥、全局上限约束及真实服务验收，不绑定实际使用。
+
+输出数量默认 1。一次 POST 提交全部参考图和原生数量，按 `data[]` 获取 URL／`b64_json` 全集并逐项发送；返回信息区分请求、接口返回项、可用和实际发送数量。部分下载或发送失败仍处理其他已有项，不补生图、不自动重提交。超时只报告服务端结果未知。HTTP 超时沿用 `proxy.timeout`，Tool RPC 预留 600 秒执行预算，此预算不构成服务响应承诺。
+
+普通路径不注入旧模型固定画风、负面提示词、提示词优化、缓存或供应商专属默认参数。尺寸只接受本次显式值，或模型启用固定尺寸时的 `default_size`。自拍、自动调度、公开 API 与旧命令仍走旧链路，下列历史功能和参数说明不能当作普通新链路能力；`/dr default` 不再改变普通 Tool 的全局默认。完整 XML 组装、命名模板、迁移、旧入口清理与 Seedream 专属适配尚未交付。
+
+仅进行了假 SDK 与 `httpx.MockTransport` 离线验收，未执行真实生图或发布；未修改实际配置或 MaiBot 核心。测试使用现有环境中的 `httpx`、Pillow、pytest，不新增安装依赖。
+
+```bash
+uv run --no-sync --offline python -m pytest plugins/1021143806.mais_art_journal/tests/generation_test.py -q -p no:cacheprovider --confcutdir=plugins/1021143806.mais_art_journal/tests
+```
+
+## ✨ 历史链路主要特性
 
 ### 🎯 智能图片生成
 - **文生图**: 根据对话内容自动生成图片

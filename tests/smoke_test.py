@@ -366,6 +366,65 @@ def test_tool_schema_and_request_defaults():
         return False
 
 
+def test_openai_client_respects_disabled_proxy():
+    """测试关闭插件代理时不会继承进程环境代理"""
+    print("\n测试 8: OpenAI 客户端代理开关...")
+    try:
+        import urllib.request
+
+        from core.api_clients.openai_client import OpenAIClient
+
+        class MockContext:
+            log_prefix = "[test]"
+
+            @staticmethod
+            def get_config(key, default=None):
+                return default
+
+        captured_handlers = []
+        original_build_opener = urllib.request.build_opener
+
+        class FakeOpener:
+            @staticmethod
+            def open(*args, **kwargs):
+                raise RuntimeError("stop before network")
+
+        def fake_build_opener(*handlers):
+            captured_handlers.append(handlers)
+            return FakeOpener()
+
+        urllib.request.build_opener = fake_build_opener
+        try:
+            OpenAIClient(MockContext())._make_request(
+                prompt="test",
+                model_config={
+                    "base_url": "http://example.invalid/v1",
+                    "api_key": "Bearer test",
+                    "model": "test-model",
+                },
+                size="1024x1024",
+            )
+        finally:
+            urllib.request.build_opener = original_build_opener
+
+        if len(captured_handlers) != 1 or len(captured_handlers[0]) != 1:
+            print("  ❌ 未使用显式代理处理器")
+            return False
+
+        proxy_handler = captured_handlers[0][0]
+        if not isinstance(proxy_handler, urllib.request.ProxyHandler) or proxy_handler.proxies:
+            print("  ❌ 关闭代理时仍配置了环境代理")
+            return False
+
+        print("  ✅ 关闭插件代理时显式直连")
+        return True
+    except Exception as e:
+        print(f"  ❌ OpenAI 客户端代理开关测试失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     print("=" * 60)
     print("mais_art_journal 插件冒烟测试")
@@ -381,6 +440,7 @@ def main():
     results.append(("关键模块导入", test_imports()))
     results.append(("命令 pattern", test_command_pattern()))
     results.append(("Tool schema / 默认值", test_tool_schema_and_request_defaults()))
+    results.append(("OpenAI 客户端代理开关", test_openai_client_respects_disabled_proxy()))
 
     # 输出总结
     print("\n" + "=" * 60)

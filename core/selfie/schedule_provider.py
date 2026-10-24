@@ -123,6 +123,10 @@ def _classify_activity(*hints: str) -> ActivityType:
 
 # ==================== Provider 基类 ====================
 
+class LiveScheduleError(RuntimeError):
+    """当前日程接口不可用或快照无效，不能当成没有活动。"""
+
+
 class ScheduleProvider:
     """日程提供者基类"""
 
@@ -147,6 +151,27 @@ class ApiScheduleProvider(ScheduleProvider):
         # 懒加载的 SQLite fallback
         self._sqlite_fallback: Optional[PlanningPluginProvider] = None
         self._sqlite_fallback_inited: bool = False
+
+    async def get_live_activity(self) -> Optional[ActivityInfo]:
+        """新自拍链路只接受规划 API 的当前快照，不读历史数据库兜底。"""
+        try:
+            snapshot = await self._ctx.api.call(_PLANNING_API_NAME, chat_id=self._chat_id)
+        except Exception as exc:
+            raise LiveScheduleError(
+                f"实时日程 API 调用失败（{type(exc).__name__}），请检查自主规划插件和调用权限"
+            ) from exc
+        if not isinstance(snapshot, dict) or type(snapshot.get("has_activity")) is not bool:
+            raise LiveScheduleError("实时日程 API 返回格式无效，未生成、未发布")
+        if snapshot.get("error"):
+            raise LiveScheduleError("自主规划插件未能提供当前快照，请检查其初始化与日志")
+        if not snapshot["has_activity"]:
+            return None
+        activity = snapshot.get("activity")
+        if not isinstance(activity, dict) or not any(
+            isinstance(activity.get(key), str) and activity[key].strip() for key in ("name", "description")
+        ):
+            raise LiveScheduleError("实时日程快照缺少活动内容，未生成、未发布")
+        return self._snapshot_to_activity(snapshot)
 
     async def get_current_activity(self) -> Optional[ActivityInfo]:
         snapshot = await self._call_api()

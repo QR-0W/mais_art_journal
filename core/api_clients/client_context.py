@@ -37,11 +37,8 @@ class ClientContext:
         self._get = config_getter or (lambda _key, default=None: default)
 
     def get_config(self, key: str, default: Any = None) -> Any:
-        """嵌套 dot-path 配置读取，与旧 BaseAction.get_config 行为一致"""
-        try:
-            return self._get(key, default)
-        except Exception:
-            return default
+        """读取配置；错误直接传播，不能悄悄改用默认配置。"""
+        return self._get(key, default)
 
     def get_proxy_config(self) -> Optional[dict]:
         """返回 requests/urllib 友好的代理配置（启用时返回 dict，否则 None）"""
