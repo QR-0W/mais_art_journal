@@ -42,32 +42,28 @@ class BaseApiClient:
 
     def _get_proxy_config(self) -> Optional[Dict[str, Any]]:
         """获取代理配置（ClientContext 走 get_proxy_config，duck-typed 回退读 get_config）"""
-        try:
-            # 优先走 ClientContext 提供的封装
-            if isinstance(self.ctx, ClientContext):
-                cfg = self.ctx.get_proxy_config()
-                if cfg:
-                    logger.info(f"{self.log_prefix} 代理已启用: {cfg.get('http')}")
-                return cfg
+        # 优先走 ClientContext 提供的封装
+        if isinstance(self.ctx, ClientContext):
+            cfg = self.ctx.get_proxy_config()
+            if cfg:
+                logger.info(f"{self.log_prefix} 代理已启用: {cfg.get('http')}")
+            return cfg
 
-            # 回退：从 get_config 平铺读取
-            proxy_enabled = self.ctx.get_config("proxy.enabled", False)
-            if not proxy_enabled:
-                return None
-
-            proxy_url = self.ctx.get_config("proxy.url", "http://127.0.0.1:7890")
-            timeout = self.ctx.get_config("proxy.timeout", 60)
-
-            proxy_config = {
-                "http": proxy_url,
-                "https": proxy_url,
-                "timeout": timeout,
-            }
-            logger.info(f"{self.log_prefix} 代理已启用: {proxy_url}")
-            return proxy_config
-        except Exception as e:
-            logger.warning(f"{self.log_prefix} 获取代理配置失败: {e}, 将不使用代理")
+        # 回退：从 get_config 平铺读取
+        proxy_enabled = self.ctx.get_config("proxy.enabled", False)
+        if not proxy_enabled:
             return None
+
+        proxy_url = self.ctx.get_config("proxy.url", "http://127.0.0.1:7890")
+        timeout = self.ctx.get_config("proxy.timeout", 60)
+
+        proxy_config = {
+            "http": proxy_url,
+            "https": proxy_url,
+            "timeout": timeout,
+        }
+        logger.info(f"{self.log_prefix} 代理已启用: {proxy_url}")
+        return proxy_config
 
     def _prepare_image_data_uri(self, image_base64: str) -> str:
         """准备图片的data URI格式

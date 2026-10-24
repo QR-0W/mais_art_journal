@@ -1,280 +1,236 @@
-"""自动自拍后台任务
+"""按当地日历窗口随机执行自拍，只使用实时日程 API，不补排或重试。
 
-定时执行自拍流程：
-1. 从 ScheduleProvider 获取当前活动
-2. 用 prompts.selfie_prompt_builder.build_for_activity 生成 prompt + negative
-3. 走 build_auto_selfie_pipeline() 出图
-4. 用 caption_generator 生成配文
-5. 通过 ctx.api.call("Rabbit-Jia-Er.MaiTrace.send_feed_api") 发布到 QQ 空间说说
-
-特性：
-- 可配置间隔（如每 2 小时）
-- 安静时段控制
-- 无日程数据 → 跳过
-- 连续失败指数退避
+每个等分时间段抽取一次触发时间，计划和已消费项保存在一个 JSON 文件中。
+执行顺序为实时活动、生成一张自拍、生成配文、调用一次 MaiTrace 发布 API。
 """
 from __future__ import annotations
 
-import asyncio
-import base64
-import logging
-import os
-from typing import TYPE_CHECKING, Optional
+from datetime import datetime, time, timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
-from ..config import get_model_config
-from ..pipeline import GenerationRequest, build_auto_selfie_pipeline, make_pipeline_context
-from ..prompts import build_auto_selfie_prompt
-from ..utils import is_in_time_range
+import asyncio
+import json
+import logging
+import random
+
 from .caption_generator import generate_caption
-from .schedule_provider import get_schedule_provider
+from .schedule_provider import ApiScheduleProvider, LiveScheduleError
+from .service import 生成自拍
 
 if TYPE_CHECKING:
-    from ..plugin import MaisArtPlugin
+    from ...plugin import MaisArtPlugin
 
 logger = logging.getLogger("plugin.mais_art_journal.auto_selfie")
 
 
 class AutoSelfieTask:
-    """自动自拍后台定时任务"""
-
-    # 连续失败达到此次数后，等待时间翻倍
-    _MAX_CONSECUTIVE_FAILURES = 3
+    """自动自拍后台任务，阶段结果不包含图片、配文或外部异常原文。"""
 
     def __init__(self, plugin: "MaisArtPlugin"):
         self.plugin = plugin
         self.is_running = False
         self.task: Optional[asyncio.Task] = None
-        self._consecutive_failures = 0
-        self._pipeline = build_auto_selfie_pipeline()
+        self.last_result: Dict[str, Any] = {}
+        self._plan: Optional[Dict[str, Any]] = None
 
     async def start(self) -> None:
         if self.is_running:
             return
         self.is_running = True
         self.task = asyncio.create_task(self._selfie_loop())
+        self.task.add_done_callback(self._task_done)
         logger.info("自动自拍任务已启动")
 
     async def stop(self) -> None:
-        if not self.is_running:
-            return
         self.is_running = False
-        if self.task:
+        if self.task is not None:
             self.task.cancel()
             try:
                 await self.task
             except asyncio.CancelledError:
                 pass
+            except Exception as exc:
+                logger.error("自动自拍任务结束异常: %s", type(exc).__name__)
+            finally:
+                self.task = None
         logger.info("自动自拍任务已停止")
 
-    # ==================== 主循环 ====================
+    def _task_done(self, task: asyncio.Task) -> None:
+        self.is_running = False
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._result("schedule", "failed", "自动自拍调度已停止", exc)
+            logger.error("自动自拍调度异常: %s", type(exc).__name__)
 
-    def _is_quiet_hours(self) -> bool:
-        quiet_start = self.plugin.config.selfie.quiet_hours_start or "00:00"
-        quiet_end = self.plugin.config.selfie.quiet_hours_end or "07:00"
-        return is_in_time_range(quiet_start, quiet_end)
+    def _result(
+        self, stage: str, status: str, message: str, exc: Optional[Exception] = None,
+    ) -> Dict[str, Any]:
+        result = {
+            "stage": stage, "status": status,
+            "success": status == "success", "message": message,
+        }
+        if exc is not None:
+            result["exception_type"] = type(exc).__name__
+            logger.warning("自动自拍阶段 %s 异常: %s", stage, type(exc).__name__)
+        self.last_result = result
+        return result
+
+    def _window_bounds(self, now: datetime) -> Tuple[datetime, datetime]:
+        config = self.plugin.config.selfie
+        zone = ZoneInfo(config.time_zone)
+        local = now.astimezone(zone)
+        start_time = time.fromisoformat(config.window_start)
+        end_time = time.fromisoformat(config.window_end)
+        day = local.date()
+        start = datetime.combine(day, start_time, zone)
+        if local < start:
+            day -= timedelta(days=1)
+            start = datetime.combine(day, start_time, zone)
+        end_day = day + timedelta(days=1) if end_time <= start_time else day
+        return start, datetime.combine(end_day, end_time, zone)
+
+    @property
+    def _plan_path(self) -> Path:
+        return Path(self.plugin.ctx.paths.data_dir) / "auto_selfie_plan.json"
+
+    def _read_plan(self) -> Optional[Dict[str, Any]]:
+        try:
+            return json.loads(self._plan_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+
+    def _write_plan(self) -> None:
+        path = self._plan_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self._plan, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(path)
+
+    async def _prepare_plan(self, now: datetime) -> Dict[str, Any]:
+        start, end = self._window_bounds(now)
+        config = self.plugin.config.selfie
+        count = config.daily_count
+        if count < 1:
+            raise ValueError("daily_count must be positive")
+        key = [start.date().isoformat(), config.window_start, config.window_end, config.time_zone, count]
+        if self._plan is not None and self._plan["key"] == key:
+            return self._plan
+        saved = await asyncio.to_thread(self._read_plan)
+        if saved is not None and saved["key"] == key:
+            self._plan = saved
+        else:
+            segment = (end.timestamp() - start.timestamp()) / count
+            triggers = [start.timestamp() + (i + random.random()) * segment for i in range(count)]
+            self._plan = {
+                "key": key, "triggers": triggers, "consumed": [],
+                "segment_ends": [start.timestamp() + (i + 1) * segment for i in range(count)],
+            }
+        # 启动或恢复时，过去的触发点只标记为已消费，不重抽、不补做。
+        consumed = self._plan["consumed"]
+        for i, trigger in enumerate(self._plan["triggers"]):
+            if trigger <= now.timestamp() and i not in consumed:
+                consumed.append(i)
+        await asyncio.to_thread(self._write_plan)
+        return self._plan
+
+    async def _next_trigger(self, now: datetime) -> Tuple[Optional[int], float]:
+        plan = await self._prepare_plan(now)
+        changed = False
+        for i, trigger in enumerate(plan["triggers"]):
+            if i in plan["consumed"]:
+                continue
+            if trigger <= now.timestamp():
+                plan["consumed"].append(i)
+                changed = True
+                continue
+            if changed:
+                await asyncio.to_thread(self._write_plan)
+            return i, trigger
+        if changed:
+            await asyncio.to_thread(self._write_plan)
+        start, _ = self._window_bounds(now)
+        next_start = datetime.combine(start.date() + timedelta(days=1), start.timetz())
+        return None, next_start.timestamp()
 
     async def _selfie_loop(self) -> None:
-        await asyncio.sleep(30)  # 启动延迟，避免和主程序抢资源
-
-        interval = max(int(self.plugin.config.selfie.interval_minutes or 120), 10)
-        interval_seconds = interval * 60
-
         while self.is_running:
-            try:
-                if self._is_quiet_hours():
-                    logger.debug("当前在安静时段，跳过自拍")
-                else:
-                    await self._execute_selfie()
-                    self._consecutive_failures = 0
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._consecutive_failures += 1
-                logger.error(f"自拍任务执行出错 (连续第{self._consecutive_failures}次): {e}")
+            index, trigger = await self._next_trigger(datetime.now(ZoneInfo(self.plugin.config.selfie.time_zone)))
+            await asyncio.sleep(max(0, trigger - datetime.now().timestamp()))
+            if index is None:
+                continue
+            now = datetime.now().timestamp()
+            if now < trigger:
+                continue
+            self._plan["consumed"].append(index)
+            await asyncio.to_thread(self._write_plan)
+            if now >= self._plan["segment_ends"][index]:
+                continue
+            await self._execute_selfie()
 
-            backoff_multiplier = 2 ** (self._consecutive_failures // self._MAX_CONSECUTIVE_FAILURES)
-            sleep_seconds = interval_seconds * backoff_multiplier
-            if backoff_multiplier > 1:
-                logger.warning(
-                    f"连续失败 {self._consecutive_failures} 次，下次自拍间隔延长至 {sleep_seconds // 60} 分钟"
-                )
-            await asyncio.sleep(sleep_seconds)
-
-    # ==================== 单次自拍 ====================
-
-    async def _execute_selfie(self) -> None:
-        logger.info("开始执行自动自拍流程...")
-
-        # 1. 获取当前活动
-        provider = get_schedule_provider(ctx=self.plugin.ctx, chat_id="global")
-        activity = await provider.get_current_activity() if provider else None
-        if not activity:
-            logger.info("未获取到当前活动信息，跳过本次自拍")
-            return
-
-        logger.info(f"当前活动: {activity.description} ({activity.activity_type.value})")
-
-        # 2. 生成自拍提示词（LLM 失败则跳过）
-        selfie_style = self.plugin.config.selfie.default_style
-        bot_appearance = self.plugin.config.selfie.prompt_prefix or ""
-        base_negative = self.plugin.config.selfie.negative_prompt or ""
-        llm_task = self.plugin.config.basic.llm_task_name or "utils"
-
-        prompt_result = await build_auto_selfie_prompt(
-            ctx=self.plugin.ctx,
-            activity_info=activity,
-            selfie_style=selfie_style,
-            bot_appearance=bot_appearance,
-            base_negative=base_negative,
-            llm_task=llm_task,
-            log_prefix="[AutoSelfie]",
-        )
-        if prompt_result is None:
-            logger.warning("LLM 自拍提示词生成失败，跳过本次自拍")
-            return
-
-        # 3. 走 pipeline 生图（不发送 / 不缓存 / 不撤回）
-        selfie_model = self.plugin.config.selfie.selfie_model or "model1"
-        model_cfg = get_model_config(self.plugin, selfie_model)
-        if not model_cfg:
-            logger.error(f"模型配置获取失败: {selfie_model}")
-            return
-
-        reference_image = self._load_reference_image()
-        input_image_b64: Optional[str] = None
-        strength: Optional[float] = None
-        if reference_image and model_cfg.get("support_img2img", True):
-            input_image_b64 = reference_image
-            strength = 0.6
-            logger.info("使用参考图片进行图生图自拍")
-        elif reference_image:
-            logger.warning(f"模型 {selfie_model} 不支持图生图，回退文生图")
-
-        req = GenerationRequest(
-            description=prompt_result.prompt,
-            model_id=selfie_model,
-            size=model_cfg.get("default_size", "1024x1024"),
-            strength=strength,
-            input_image_base64=input_image_b64,
-            extra_negative_prompt=prompt_result.negative_prompt,
-            send_image=False,
-            update_cache=False,
-            schedule_recall=False,
-            debug_info=False,
-            silent_img2img_fallback=True,
-            stream_id="",
-            chat_id="",
-            log_prefix="[AutoSelfie]",
-            source="auto_selfie",
-        )
-        ctx = make_pipeline_context(self.plugin, req)
-        out = await self._pipeline.run(req, ctx)
-
-        if not out.success or not out.resolved_image_data:
-            logger.error(f"自拍图片生成失败: {out.error or '无图片数据'}")
-            raise RuntimeError(f"自拍生图失败: {out.error or '未知错误'}")
-
-        logger.info(f"自拍图片生成成功，数据长度: {len(out.resolved_image_data)}")
-
-        # 4. 配文
-        caption = ""
-        if self.plugin.config.selfie.caption_enabled:
-            caption = await generate_caption(self.plugin.ctx, activity, llm_task=llm_task)
-            if not caption:
-                logger.warning("配文生成失败，跳过本次自拍发布")
-                return
-            logger.info(f"配文: {caption}")
-
-        # 5. 发布到 QQ 空间
-        await self._publish_to_qzone(out.resolved_image_data, caption)
-
-    # ==================== 工具 ====================
-
-    def _load_reference_image(self) -> Optional[str]:
-        path = (self.plugin.config.selfie.reference_image_path or "").strip()
-        if not path:
-            return None
+    async def _execute_selfie(self) -> Dict[str, Any]:
+        stage = "activity"
         try:
-            if not os.path.isabs(path):
-                path = os.path.join(self.plugin.plugin_dir, path)
-            if not os.path.exists(path):
-                logger.warning(f"[AutoSelfie] 自拍参考图片文件不存在: {path}")
-                return None
-            with open(path, "rb") as f:
-                data = f.read()
-            logger.info(f"[AutoSelfie] 从文件加载自拍参考图片: {path}")
-            return base64.b64encode(data).decode("utf-8")
-        except Exception as e:
-            logger.error(f"[AutoSelfie] 加载自拍参考图片失败: {e}")
-            return None
+            self._result(stage, "running", "正在获取实时活动")
+            provider = ApiScheduleProvider(self.plugin.ctx, chat_id="global")
+            activity = await provider.get_live_activity()
+            if activity is None:
+                return self._result(stage, "skipped", "没有实时活动，跳过本次自拍")
 
-    async def _publish_to_qzone(self, image_data: str, caption: str) -> None:
-        """通过 MaiTrace 插件暴露的 send_feed_api 发说说
+            stage = "generation"
+            self._result(stage, "running", "正在生成自拍")
+            generated = await 生成自拍(self.plugin, activity=activity)
+            if generated.get("uncertain") is True:
+                return self._result(stage, "unknown", "自拍生成结果未知，未发布且不重试")
+            if generated.get("failures"):
+                return self._result(stage, "failed", "自拍生成包含失败项，未发布")
+            if generated.get("success") is not True:
+                return self._result(stage, "failed", "自拍生成失败，未发布")
+            images = generated.get("images", [])
+            if len(images) != 1 or generated.get("available_count") != 1:
+                return self._result(stage, "failed", "自拍图片数量违反单张协议，未发布")
+            image = images[0]["base64"]
+            if not isinstance(image, str) or not image or image.startswith(("data:", "http://", "https://")):
+                return self._result(stage, "failed", "自拍未返回纯 base64 图片，未发布")
 
-        MaiTrace v3+ API 契约（plugins/MaiTrace/handlers/apis.py）：
-            ctx.api.call(
-                "Rabbit-Jia-Er.MaiTrace.send_feed_api",
-                message=<str>,
-                images=<list[str]>,   # base64 字符串列表，不含 data:image/... 前缀
-            ) -> {"result": bool, "message": str}
+            stage = "caption"
+            self._result(stage, "running", "正在生成配文")
+            caption = await generate_caption(
+                self.plugin.ctx, activity, llm_task=self.plugin.config.basic.llm_task_name or "utils",
+            )
+            if not caption or not caption.strip():
+                return self._result(stage, "failed", "配文生成失败，未发布")
 
-        pipeline 出来的 image_data 已经是纯 base64 字符串（ResolveImageData step 保证），
-        直接透传即可。MaiTrace 内部会 b64decode 成 bytes 再上传 QQ 空间。
-
-        当 MaiTrace 未安装 / 未启用 / 未授权 api.call 时，本方法捕获异常仅 warning，
-        不影响自动自拍主流程。
-        """
-        try:
-            image_b64 = await self._normalize_to_base64(image_data)
-            if not image_b64:
-                logger.error("图片数据无效，无法发布到 QQ 空间")
-                return
-
-            try:
-                result = await self.plugin.ctx.api.call(
-                    "Rabbit-Jia-Er.MaiTrace.send_feed_api",
-                    message=caption,
-                    images=[image_b64],
-                )
-            except Exception as exc:
-                logger.warning(
-                    f"调用 MaiTrace.send_feed_api 失败"
-                    f"（MaiTrace 未安装 / 未启用 / api.call 未授权?）: {exc}"
-                )
-                return
-
-            if not isinstance(result, dict):
-                logger.warning(f"MaiTrace.send_feed_api 返回非字典: {result!r}")
-                return
-
-            if result.get("result"):
-                logger.info(f"自拍已发布到 QQ 空间: {result.get('message', '')}")
+            stage = "publication"
+            self._result(stage, "running", "正在提交发布")
+            result = await self.plugin.ctx.api.call(
+                "Rabbit-Jia-Er.MaiTrace.send_feed_api", message=caption, images=[image],
+            )
+            if not isinstance(result, dict) or result.get("uncertain") is True:
+                return self._result(stage, "unknown", "发布结果未知，不重试")
+            if result.get("result") is True:
+                return self._result(stage, "success", "自拍已确认发布")
+            if result.get("result") is False:
+                return self._result(stage, "failed", "自拍发布失败，不重试")
+            return self._result(stage, "unknown", "发布结果未知，不重试")
+        except asyncio.CancelledError:
+            status = "unknown" if stage in ("generation", "publication") else "cancelled"
+            if stage == "publication":
+                message = "发布结果未知，不重试"
+            elif stage == "generation":
+                message = "生成等待已取消；若已提交，服务端结果未知，不重提交"
             else:
-                logger.error(f"发布自拍到 QQ 空间失败: {result.get('message', '未知错误')}")
+                message = "自拍流程已取消"
+            self._result(stage, status, message)
+            raise
+        except LiveScheduleError as exc:
+            return self._result("activity", "failed", str(exc))
+        except Exception as exc:
+            status = "unknown" if stage == "publication" else "failed"
+            return self._result(stage, status, "发布结果未知，不重试" if status == "unknown" else "自拍流程已终止，未发布", exc)
 
-        except Exception as e:
-            logger.error(f"发布自拍到 QQ 空间异常: {e}", exc_info=True)
 
-    @staticmethod
-    async def _normalize_to_base64(image_data: str) -> Optional[str]:
-        """把 image_data 统一成纯 base64 字符串
-
-        pipeline 的 ResolveImageData step 保证 ``out.resolved_image_data`` 已经是纯 base64，
-        本方法只是对 URL / data URI 形态做兜底（理论上不会触发）。
-        """
-        if not image_data:
-            return None
-        if image_data.startswith(("http://", "https://")):
-            try:
-                import httpx
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(image_data)
-                    resp.raise_for_status()
-                    return base64.b64encode(resp.content).decode("utf-8")
-            except Exception as exc:
-                logger.error(f"image_data 是 URL 但下载失败: {exc}")
-                return None
-        if image_data.startswith("data:image/") and ";base64," in image_data:
-            return image_data.split(";base64,", 1)[1]
-        # 纯 base64 字符串，直接返回
-        return image_data
+__all__ = ["AutoSelfieTask"]
