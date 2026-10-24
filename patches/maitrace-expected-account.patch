@@ -1,0 +1,43 @@
+--- a/plugin.py
++++ b/plugin.py
+@@ -322,6 +322,21 @@
+         return await send_feed_api(self, message=message, images=images)
+ 
+     @API(
++        "send_feed_checked_api",
++        description="发布调用方已确认的图文到明确QQ；实际发布账号不符时拒绝，不自动配图或重试。",
++        version="1",
++        public=True,
++        timeout_ms=180000,
++    )
++    async def handle_send_feed_checked_api(
++        self, expected_qq: str = "", message: str = "", images: Optional[list[str]] = None,
++    ) -> dict:
++        if not isinstance(expected_qq, str) or not expected_qq.isdigit():
++            return {"result": False, "message": "需要明确批准的目标QQ"}
++        from .handlers.apis import send_feed_api
++        return await send_feed_api(self, message=message, images=images, expected_qq=expected_qq)
++
++    @API(
+         "get_feeds_list_api",
+         description="获取指定 QQ 的最近说说列表。参数：target_qq(str, 必填)、num(int, 默认5)。",
+         version="1",
+--- a/handlers/apis.py
++++ b/handlers/apis.py
+@@ -41,6 +41,7 @@
+     plugin,
+     message: str = "",
+     images: Optional[List[str]] = None,
++    expected_qq: str = "",
+ ) -> Dict[str, Any]:
+     """发送说说。供其他插件 ctx.api.call('Rabbit-Jia-Er.MaiTrace.send_feed_api', ...) 调用。
+ 
+@@ -62,6 +63,8 @@
+         qzone = await create_qzone_publisher(plugin)
+         if qzone is None:
+             return {"result": False, "message": "无法连接 QQ 空间，Cookie 可能不存在"}
++        if expected_qq and qzone.uin != expected_qq:
++            return {"result": False, "message": "实际发布账号与已批准目标不一致，未提交说说"}
+         tid = await qzone.publish_emotion(message, decoded_images, publication=state)
+     except PublicationUncertainError as exc:
+         logger.error("send_feed_api 结果待核对: %s", exc)

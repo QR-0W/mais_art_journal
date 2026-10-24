@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "4.4.1",
+  "version": "4.4.2",
   "name": "麦麦绘卷（Claude MAInet）",
   "description": "基于 MaiBot 的多模型智能绘图插件。兼容 OpenAI、OpenAI-Chat、豆包（火山方舟）、Gemini、魔搭、硅基流动、砂糖云、梦羽、智谱 GLM、阿里百炼 DashScope、ComfyUI。普通绘图支持有序参考与原生多输出，人设自拍复用统一默认，日程自拍单次发布至 MaiTrace；包含管理员联调页和旧命令、公开生图 API。",
   "plugin_type": "creative",

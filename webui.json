@@ -20,6 +20,7 @@
         "api": "start_preview_publication",
         "parameters": {
           "expected_sha256": {"type": "string", "required": true, "max_length": 64},
+          "expected_qq": {"type": "string", "required": true},
           "message": {"type": "string", "required": true}
         },
         "confirmation": "确认向MaiTrace当前登录QQ空间发布摘要匹配的本地预览图及已确认正文？请先核对账号。可能公开可见，不重新生图、不重试、不替换图片。"

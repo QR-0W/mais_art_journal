@@ -235,9 +235,11 @@ class MaisArtPlugin(MaiBotPlugin):
         return self._start_selfie_test(True)
 
     @API("start_preview_publication", description="管理员发布已核对摘要的本地预览图，不重新生图；只尝试一次发布")
-    async def api_start_preview_publication(self, expected_sha256: str = "", message: str = "") -> Dict[str, Any]:
+    async def api_start_preview_publication(self, expected_sha256: str = "", message: str = "", expected_qq: str = "") -> Dict[str, Any]:
         import re
 
+        if not isinstance(expected_qq, str) or not expected_qq.isdigit():
+            return {"success": False, "message": "需要明确批准的目标QQ"}
         if not isinstance(expected_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
             return {"success": False, "message": "需要已确认预览图的 SHA256"}
         if not isinstance(message, str) or not message.strip():
@@ -248,10 +250,10 @@ class MaisArtPlugin(MaiBotPlugin):
             return {"success": False, "message": "请先关闭自动调度，再发布已确认预览"}
         self._test_executor = None
         self._manual_test_result = {"stage": "queued", "status": "running", "message": "正在核对已确认预览，不重新生图"}
-        self._manual_test_task = asyncio.create_task(self._run_preview_publication(expected_sha256, message))
+        self._manual_test_task = asyncio.create_task(self._run_preview_publication(expected_sha256, message, expected_qq))
         return dict(self._manual_test_result)
 
-    async def _run_preview_publication(self, expected_sha256: str, message: str) -> None:
+    async def _run_preview_publication(self, expected_sha256: str, message: str, expected_qq: str) -> None:
         from pathlib import Path
         import base64
         import hashlib
@@ -271,7 +273,7 @@ class MaisArtPlugin(MaiBotPlugin):
             image = await asyncio.to_thread(read_approved_preview)
             stage = "publication"
             self._manual_test_result = {"stage": stage, "status": "running", "message": "正在发布已确认图文，不重新生图"}
-            result = await self.ctx.api.call("Rabbit-Jia-Er.MaiTrace.send_feed_api", message=message, images=[image])
+            result = await self.ctx.api.call("Rabbit-Jia-Er.MaiTrace.send_feed_checked_api", expected_qq=expected_qq, message=message, images=[image])
             if isinstance(result, dict) and result.get("uncertain") is not True and result.get("result") is True:
                 self._manual_test_result = {"stage": stage, "status": "success", "success": True, "message": "已确认图文发布成功"}
                 identifier = re.search(r"\btid=([A-Za-z0-9_-]+)", str(result.get("message", "")))
