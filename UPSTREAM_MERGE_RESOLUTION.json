@@ -1,0 +1,1251 @@
+{
+  "scope": "Selective merge, not complete 4.6.3 feature upgrade",
+  "premerge_head": "020614d775d3ae6ff87c3a5234c6d3149eaa13bc",
+  "upstream_parent": "cafd4eae857a5dbb7412e5611ce1f3e2a8a32ed5",
+  "merge_base": "295382dde6d1dee63e59beda4b5c3df536ba06af",
+  "source_policy": "Audited S4 production/source files retained byte-for-byte; accepted upstream static icon and existing AGPL; explicit path ledger for every official delta. No ours strategy.",
+  "entries": [
+    {
+      "path": ".gitignore",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留本地忽略规则；不把运行配置、图片或缓存纳入发布。",
+      "premerge": {
+        "mode": "100644",
+        "object": "eca9cc533f8e35f8e4fb49082bbbfef807c63b36"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "8c98ab42534b0c0804e85ad371ad1d817ee7a169"
+      }
+    },
+    {
+      "path": "LICENSE",
+      "upstream_status": "M",
+      "decision": "retain_identical_preintegrated",
+      "reason": "已在S3移植官方AGPL授权，保留原MIT通知。",
+      "premerge": {
+        "mode": "100644",
+        "object": "be3f7b28e564e7dd05eaf59d64adba1a4065ac0e"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "be3f7b28e564e7dd05eaf59d64adba1a4065ac0e"
+      }
+    },
+    {
+      "path": "README.md",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已验收S4能力与限制说明，不导入4.6.3尚未支持能力宣称。",
+      "premerge": {
+        "mode": "100644",
+        "object": "8f87f1298e83571a29ea47c16882d3403a5dda68"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "4da78f7a0811a3fdb5a77c96ed86eb7475b6448a"
+      }
+    },
+    {
+      "path": "_manifest.json",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4插件身份、SDK/依赖边界和私有WebUI能力。",
+      "premerge": {
+        "mode": "100644",
+        "object": "65c03ef678f07b62f41601f4d84eda9d480a6a5b"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "59c3eaf99d40289560cc8ba3c92c6f876c997ff6"
+      }
+    },
+    {
+      "path": "changelog.md",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "上游版本记录包含本轮未启用的NAI、quota与proactive；避免误报完整升级。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "6161ee89922f201efb589095520c7b59931cf8ea"
+      }
+    },
+    {
+      "path": "core/__init__.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4导入表，不挂入已排除的NAI、quota、proactive或新状态存储。",
+      "premerge": {
+        "mode": "100644",
+        "object": "6e0445ac88dd213979b309580465747e79b0a6a7"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "263d03a9af8ae4450537c99aeca95de573be79d7"
+      }
+    },
+    {
+      "path": "core/api_clients/__init__.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4导入表，不挂入已排除的NAI、quota、proactive或新状态存储。",
+      "premerge": {
+        "mode": "100644",
+        "object": "02da6093713a98f4c030680d2e5825d9531a9970"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "2bffdd487194c9ee35a57cb807230bdf5f342b0f"
+      }
+    },
+    {
+      "path": "core/api_clients/base_client.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已移植的配置错误传播修复，同时保留本地ctx/legacyctx兼容；不覆盖整个客户端基类。",
+      "premerge": {
+        "mode": "100644",
+        "object": "4a7a32e9263549e1473ab271151afdfd3e3bfc7d"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "6d597b27d17cba5dafb78966554dddd529754b63"
+      }
+    },
+    {
+      "path": "core/api_clients/client_context.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已移植的配置错误传播修复，同时保留本地ctx/legacyctx兼容；不覆盖整个客户端基类。",
+      "premerge": {
+        "mode": "100644",
+        "object": "2575fa14ea49a90b767e96cdcfbcba8c2c76a88f"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "508a5ea9efdbd2dca5680c2945111d3c5a08d66e"
+      }
+    },
+    {
+      "path": "core/api_clients/comfyui_client.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留必需参考图缺占位符的NonRetryableError与禁环境代理；明确排除独立600秒等待集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "704c4f0d1a7a1ce0657a74a801e6582a059459d0"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "03a3ca261d033402b7495dc03fbd133be60f8948"
+      }
+    },
+    {
+      "path": "core/api_clients/novelai_client.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "NAI后端扩展暂缓；尚无已确认配置及有序引用/原生多输出契约，不新增未验收支持。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "a2ca488c964cc3d3519eb9d9bafb0b006ea66de2"
+      }
+    },
+    {
+      "path": "core/commands/dispatcher.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已审阅命令行为；不引入聊天默认模型偏好、额度管理及对应提示文案。显式中文编号改进未纳入本次已测source。",
+      "premerge": {
+        "mode": "100644",
+        "object": "1d3a1742e43243c08497e324256965621d7c80f5"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "551186c94b54f8c184d1ceac2b9fc3fdc6afdb5a"
+      }
+    },
+    {
+      "path": "core/commands/generate.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已审阅命令行为；不引入聊天默认模型偏好、额度管理及对应提示文案。显式中文编号改进未纳入本次已测source。",
+      "premerge": {
+        "mode": "100644",
+        "object": "011f1f5520a9363f7f4df09a7599faf84c62988f"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "ed0bdccb921984f6218dd49071840b1ffa401d2b"
+      }
+    },
+    {
+      "path": "core/commands/handlers/__init__.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4导入表，不挂入已排除的NAI、quota、proactive或新状态存储。",
+      "premerge": {
+        "mode": "100644",
+        "object": "884785c68d18ed85f6ab5de922bc61409a7fe75f"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "76a631d3fa32bc2455398feea98d8b632c26958c"
+      }
+    },
+    {
+      "path": "core/commands/handlers/config_handlers.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已审阅命令行为；不引入聊天默认模型偏好、额度管理及对应提示文案。显式中文编号改进未纳入本次已测source。",
+      "premerge": {
+        "mode": "100644",
+        "object": "2e7eeeaa9478a29c228165f30ca2790c45ecba82"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "431d2aa5218adfcccf5b23e8afaf905709d3e0a1"
+      }
+    },
+    {
+      "path": "core/commands/handlers/quota_handlers.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已审阅命令行为；不引入聊天默认模型偏好、额度管理及对应提示文案。显式中文编号改进未纳入本次已测source。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "95e7f9522d4608feba3d7c35376df20792063fe6"
+      }
+    },
+    {
+      "path": "core/commands/handlers/selfie_handlers.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已审阅命令行为；不引入聊天默认模型偏好、额度管理及对应提示文案。显式中文编号改进未纳入本次已测source。",
+      "premerge": {
+        "mode": "100644",
+        "object": "0b1082dc8fc952ec02ca3ecc861467190d49d0a2"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "3c1c68e033e2bd38a41031b5aa91ef60d6a12e31"
+      }
+    },
+    {
+      "path": "core/commands/handlers/toggle_handlers.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已审阅命令行为；不引入聊天默认模型偏好、额度管理及对应提示文案。显式中文编号改进未纳入本次已测source。",
+      "premerge": {
+        "mode": "100644",
+        "object": "68da82922d2abd24dc0d908f8e1bcf7057a0361d"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "2d092f362b9f2f3f62bdbff961dde9b23d745206"
+      }
+    },
+    {
+      "path": "core/commands/help_renderer.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已审阅命令行为；不引入聊天默认模型偏好、额度管理及对应提示文案。显式中文编号改进未纳入本次已测source。",
+      "premerge": {
+        "mode": "100644",
+        "object": "13664009cbdeb44b531058f9ce8059aad5b2f085"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "70efaa0950706f6474d71167a90ba4bc31f194e0"
+      }
+    },
+    {
+      "path": "core/config/__init__.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4导入表，不挂入已排除的NAI、quota、proactive或新状态存储。",
+      "premerge": {
+        "mode": "100644",
+        "object": "7414cafb1b0720e1d48a8b9cd600320b9ac805ba"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "5eb23642c0ecd030db78fb5af98ab4c954b53fef"
+      }
+    },
+    {
+      "path": "core/config/backup.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4唯一全局默认、显式引用/输出字段与现有配置兼容；不引入会清理S2字段的工厂迁移或新的默认链。",
+      "premerge": {
+        "mode": "100644",
+        "object": "75b8188c679570e019f01f7de58066ec9ef17bbf"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "f2c0cc4218e2acf1779f792c57d81568ac198c8a"
+      }
+    },
+    {
+      "path": "core/config/migration.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留S4唯一全局默认、显式引用/输出字段与现有配置兼容；不引入会清理S2字段的工厂迁移或新的默认链。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "fb4b309cdd0fcdaf947e78e2830779587a36cf82"
+      }
+    },
+    {
+      "path": "core/config/model_registry.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4唯一全局默认、显式引用/输出字段与现有配置兼容；不引入会清理S2字段的工厂迁移或新的默认链。",
+      "premerge": {
+        "mode": "100644",
+        "object": "44015b70b1479f82b6cd0a85fa15c60a43b00c8a"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "3cc6c23c08ca3980fcf382aecca45f0f66efe9f8"
+      }
+    },
+    {
+      "path": "core/config/models.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4唯一全局默认、显式引用/输出字段与现有配置兼容；不引入会清理S2字段的工厂迁移或新的默认链。",
+      "premerge": {
+        "mode": "100644",
+        "object": "33b9a9fbb9e0c589fa7ec3198a5480a96f314d34"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "f697b2140232537d522d3cbddf5c126e1a8cf44e"
+      }
+    },
+    {
+      "path": "core/config/novelai.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "NAI后端扩展暂缓；尚无已确认配置及有序引用/原生多输出契约，不新增未验收支持。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "f6e55ee0d87261531be97fdd060f6790232be5b4"
+      }
+    },
+    {
+      "path": "core/config/quota.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "未授权新增额度产品规则；上游按单request计量也未适配S2原生多输出。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "b79651d84b23d735bf73009bd3a91fe1fddcbb10"
+      }
+    },
+    {
+      "path": "core/config/style_registry.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4唯一全局默认、显式引用/输出字段与现有配置兼容；不引入会清理S2字段的工厂迁移或新的默认链。",
+      "premerge": {
+        "mode": "100644",
+        "object": "eadc9643a30c4c7ba6628e7f63d81d1463a6050c"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "8d95bf0e23c87b708a615bf4b21d2cb9123e1ce3"
+      }
+    },
+    {
+      "path": "core/pipeline/factories.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "56a08d5a227cbfac6903ea9dce699c239629de08"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "c11f062a5bfd0b6eb4a36752b0b3f7dca6bd90fe"
+      }
+    },
+    {
+      "path": "core/pipeline/pipeline.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "0892cf77ddaabc99b7eccdde6be4f72eb9f50bec"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "c6e322195c9e1b04415a132aaf73483412af41f5"
+      }
+    },
+    {
+      "path": "core/pipeline/request.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "f2dfc32ddb9e72bc2e70c5b66bef63c65e0fb9f2"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "78d968c5f1e38331b96892cb406f53fa9f9a5ae7"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/build_selfie_prompt.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "6cc1ca7354b7486142a68f15d0bee97bbece0291"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "d985ec2fbb0e50b36cad6636a1242933e5d58378"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/check_cache.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "33e2d62ba9bbea89e8250aa0ec5d271c4c03a74e"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "cac1c08861bdf57bf4f8ad506dffcb04f5251b3c"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/detect_img2img_fallback.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "aa4b112fb5bb81f1821d727a4fd454ed9872d493"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "d45c5dfb7fb4efd25e6850d4fdbfbf635b3dc99d"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/merge_negative_prompt.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "13c3129dc3d9c3a879d1d9bbf0f83e71f4d820e3"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "7b0369b63c19827bc86ac21759493e0c08e22c8c"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/optimize_prompt.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "15f160b5d61c77a5caa61d517f8d9b0462a090de"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "a32dd29cf62291dc3f4fd45b4d7f44d6248e9a0c"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/resolve_model.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "1582d160a194399de9ec9f2edb1b714ba27c15d6"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "30eb408c2e25fb4a6abc0a0bd329bec17888e456"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/resolve_size.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "c123f22ea6245ba14c9b43ba8cf7b9b0e25c85fe"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "97bb68d6b353163d9cd7dcf392dbf065c4e275af"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/schedule_recall.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "8853536d56e67acff4ec7efc435ccd9ee29f6273"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "31bd6b1df325d775efe1b0f0b26d52c876c930b1"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/send_image.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "3197f0babb6a7fb699d5c1e992d7aa2fe8183da2"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "b4312e7f1387231f6b2d6c5cd11c4a0161ea9e4d"
+      }
+    },
+    {
+      "path": "core/pipeline/steps/update_cache.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持已验收S4/旧公开API边界；拒绝quota流水线、参考图降级、按场景换默认与新超时集群。",
+      "premerge": {
+        "mode": "100644",
+        "object": "a56109a138561005de7123e442d7f43dd2c2774b"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "196999a28d8f2cfc88b07b867e0deeae3b0f2857"
+      }
+    },
+    {
+      "path": "core/prompts/novelai_prompt.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "NAI后端扩展暂缓；尚无已确认配置及有序引用/原生多输出契约，不新增未验收支持。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "5156a816a82dec558b600e2617dccb92658e272a"
+      }
+    },
+    {
+      "path": "core/prompts/prompt_templates.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "ab0c960f1cba0d4d2eb2f46d8ded2de890a9d223"
+      }
+    },
+    {
+      "path": "core/prompts/scene_action_llm.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": {
+        "mode": "100644",
+        "object": "8646af61860d8de1e44cab7d4a98920d6c9ea5f6"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "99e0b7314c64a71074ac788823fcb73ebb528fb9"
+      }
+    },
+    {
+      "path": "core/prompts/selfie_prompt_builder.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": {
+        "mode": "100644",
+        "object": "ca5d40e056abbbbba5e9384bfbc1418afd182104"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "4d6619210e56f128b1d1c2a3911ef8c430722a23"
+      }
+    },
+    {
+      "path": "core/prompts/templates/group_image_decision_en.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "b87a932671b8e54c3fa8d60d9d9ad5474ad4c2b7"
+      }
+    },
+    {
+      "path": "core/prompts/templates/group_image_decision_ja.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "2f1f9b6a036b55e39c91b7e2ec5f42a978b749b9"
+      }
+    },
+    {
+      "path": "core/prompts/templates/group_image_decision_zh.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "bb8dc020281dc06fd26090026b6ebdc625fb631e"
+      }
+    },
+    {
+      "path": "core/prompts/templates/prompt_optimizer_en.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "9a8b9f015ff55d708d818003061317cbe0e3acef"
+      }
+    },
+    {
+      "path": "core/prompts/templates/prompt_optimizer_ja.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "13a809db2d46ad928b40a0e54f94fc21a8625a28"
+      }
+    },
+    {
+      "path": "core/prompts/templates/prompt_optimizer_zh.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "bac804f0b08517869ba073af2b0918034a5f8367"
+      }
+    },
+    {
+      "path": "core/prompts/templates/scene_en.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "b973fc22eb62b9052130392024014b195d17b521"
+      }
+    },
+    {
+      "path": "core/prompts/templates/scene_ja.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "ba7a0a0f016f6d3be71631e38d2968c37b5bad42"
+      }
+    },
+    {
+      "path": "core/prompts/templates/scene_zh.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "aaadda5bb6863533a8e88bb7759559737e19561c"
+      }
+    },
+    {
+      "path": "core/prompts/templates/selfie_caption_en.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "7d270827a1924f11012555ae7862e01a542ab4f8"
+      }
+    },
+    {
+      "path": "core/prompts/templates/selfie_caption_ja.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "de4814280edb3e3ada6631a50111421f6fe0331e"
+      }
+    },
+    {
+      "path": "core/prompts/templates/selfie_caption_zh.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "a2e8050ee8588d70fcfe32ca0fc8ac0c59eec931"
+      }
+    },
+    {
+      "path": "core/prompts/templates/selfie_publication_en.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "ebe6fcf80b6ff7b1b92667de0f81aaa899ae5409"
+      }
+    },
+    {
+      "path": "core/prompts/templates/selfie_publication_ja.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "1948e98ecfb30ee60df49d8b86e294ed5f745a82"
+      }
+    },
+    {
+      "path": "core/prompts/templates/selfie_publication_zh.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持当前已验收身份/场景提示词，不新增上游LLM优化/主动决策及其三语模板行为。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "b5aecfff632b191badd2c2189017d73916028f02"
+      }
+    },
+    {
+      "path": "core/quota/__init__.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "未授权新增额度产品规则；上游按单request计量也未适配S2原生多输出。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "03c1bd49214d5053c0cf2270a918921717adff4f"
+      }
+    },
+    {
+      "path": "core/quota/service.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "未授权新增额度产品规则；上游按单request计量也未适配S2原生多输出。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "fd6c352f326b0fec3de8d2b6e35cea7375fb3d33"
+      }
+    },
+    {
+      "path": "core/quota/store.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "未授权新增额度产品规则；上游按单request计量也未适配S2原生多输出。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "dae3b4be6dcd3e101bd5cd0ac5c095c546988d93"
+      }
+    },
+    {
+      "path": "core/selfie/activity_rules.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "7e62e335d6a8538d2d9fbbc75041e888d9084ee5"
+      }
+    },
+    {
+      "path": "core/selfie/auto_selfie_task.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": {
+        "mode": "100644",
+        "object": "20195f150a112ee20a4772acc2fc861236a26f4e"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "1dd7bdf32e236d7b52efd0bb06f10281efee6ae3"
+      }
+    },
+    {
+      "path": "core/selfie/caption_generator.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": {
+        "mode": "100644",
+        "object": "18149f12be297804ce25a94264bfa57972d0b3f2"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "0cb0c54921d950d8bb10e2bef344f1e6544b26fc"
+      }
+    },
+    {
+      "path": "core/selfie/group_image_task.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "76ea4cad7c5f6ca5d52cd276eefe123266ac3a43"
+      }
+    },
+    {
+      "path": "core/selfie/proactive_context.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "5b5528f53d3659569705ce7293e0d0f75f7333bd"
+      }
+    },
+    {
+      "path": "core/selfie/publication_decision.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "ffec75a9f031a1873a4a3a2fb0927674126710f5"
+      }
+    },
+    {
+      "path": "core/selfie/reference_image.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "b814826d0a63ebcb72e19d2ad21c46953f23c198"
+      }
+    },
+    {
+      "path": "core/selfie/schedule_provider.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持S4人设图必需、当前规划API、手动仅真实聊天、分段随机不补排及单次发布；不引入新群主动图/渠道决策或可选参考图。",
+      "premerge": {
+        "mode": "100644",
+        "object": "4da2847474e3229ea8c27b566477f6fe163ab371"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "f55b7631be522111e89b6e240ab7dd69fc03e65b"
+      }
+    },
+    {
+      "path": "core/state/__init__.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4导入表，不挂入已排除的NAI、quota、proactive或新状态存储。",
+      "premerge": {
+        "mode": "100644",
+        "object": "4be8b6e8b44fdfcb5cf089f7d2faedf14d8176af"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "7c68029802a15f2c302b3b157b2c39593b8e2e17"
+      }
+    },
+    {
+      "path": "core/state/migration.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "不引入聊天默认模型持久化、quota迁移及proactive发布存储；保留现有S4状态边界。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "305bacc7641a6ad281eecfff876a59088e1e2804"
+      }
+    },
+    {
+      "path": "core/state/proactive_state.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "不引入聊天默认模型持久化、quota迁移及proactive发布存储；保留现有S4状态边界。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "fef775a71768341a61fd0c37c3d3fad57717531b"
+      }
+    },
+    {
+      "path": "core/state/runtime_state.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "不引入聊天默认模型持久化、quota迁移及proactive发布存储；保留现有S4状态边界。",
+      "premerge": {
+        "mode": "100644",
+        "object": "167eb947a69317cf9bc21a825ea6b4ac726253c3"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "f11599b805894506610add7e16a926ce37849319"
+      }
+    },
+    {
+      "path": "core/utils/__init__.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留S4导入表，不挂入已排除的NAI、quota、proactive或新状态存储。",
+      "premerge": {
+        "mode": "100644",
+        "object": "de6dc0669edd2e1e0eee3abb07ac0f7be4993f3a"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "7a99e9e2d1d8315e62a025b66779fda440b473f8"
+      }
+    },
+    {
+      "path": "core/utils/cache_manager.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "新版缓存身份需与读写step成对改造，本次不扩展已验收缓存行为。",
+      "premerge": {
+        "mode": "100644",
+        "object": "d5782f42757f0459fc43869114bfd51cb06303df"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "cd3943517d9c41229d1a7b18c908821af4227f7f"
+      }
+    },
+    {
+      "path": "core/utils/image_utils.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "S2有序必需引用由专用resolve_image链路处理，不用上游单图提取替代。",
+      "premerge": {
+        "mode": "100644",
+        "object": "17880c7545e19cc79b0b63e01e95a844b78bd3e2"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "4c444cb81910e07ef161f4295966e8abbd82ea1c"
+      }
+    },
+    {
+      "path": "core/utils/prompt_optimizer.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "不为维护合并新增LLM优化和语法切换行为，保留S4已验收提示词路径。",
+      "premerge": {
+        "mode": "100644",
+        "object": "f909e00651e888a6175e36da0618dd9b0ef1383e"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "c005c506cd5ac4c0dcb3d9ba74a347b3ed2dd5ac"
+      }
+    },
+    {
+      "path": "core/utils/prompt_policy.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "不为维护合并新增LLM优化和语法切换行为，保留S4已验收提示词路径。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "8e3d0654002d4d42b6b4d8821cd68f5c688b0dd1"
+      }
+    },
+    {
+      "path": "core/utils/recall_utils.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "新撤回流程需要真实回执、provider归属与卸载任务整套接线，本次不引入未经验证的平台推断。",
+      "premerge": {
+        "mode": "100644",
+        "object": "b53ae654fb394ffb17a78c238eca6c6027506e6a"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "9c589e43340604dd83abaf31e8a3c7d7ad176ef2"
+      }
+    },
+    {
+      "path": "core/utils/request_context.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持现有请求上下文与尺寸策略，不连带新增上游参数/超时行为。",
+      "premerge": {
+        "mode": "100644",
+        "object": "842c7f70f48e05936394e5c965cbb768ee6f68a0"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "db8e6bf9efc007ed3d4eccb977f25a2ae1b7bc4f"
+      }
+    },
+    {
+      "path": "core/utils/shared_constants.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持现有请求上下文与尺寸策略，不连带新增上游参数/超时行为。",
+      "premerge": {
+        "mode": "100644",
+        "object": "31407ded9f65e35ac3cad2314a8a4deb73ca344d"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "7ba9a4d28a0abbb6d306c263e78635e4965e4e8a"
+      }
+    },
+    {
+      "path": "core/utils/size_utils.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持现有请求上下文与尺寸策略，不连带新增上游参数/超时行为。",
+      "premerge": {
+        "mode": "100644",
+        "object": "1269254cbd02cc9908ca6e4b931ce6fa0e081a83"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "0b4a68d19ba00c56ad527eae33db7fa7db195459"
+      }
+    },
+    {
+      "path": "icon.png",
+      "upstream_status": "A",
+      "decision": "accept_upstream_static_asset",
+      "reason": "经Lead确认允许按上游许可纳入产品静态图标，不属于运行生成或私有人设图片。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "78c0af1b341f3fc73368a0a2ee80849efbdd1912"
+      }
+    },
+    {
+      "path": "model_presets.toml",
+      "upstream_status": "D",
+      "decision": "retain_audited_stage",
+      "reason": "保留已确认stage中的历史模型预设模板，不因上游删除改变现有兼容面。",
+      "premerge": {
+        "mode": "100644",
+        "object": "4b7c81200d2314aa8129894be997975cb8678b58"
+      },
+      "upstream": null
+    },
+    {
+      "path": "plugin.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保持S4有序引用、原生集合、人设服务、私有管理员预览/已备图发布API及现有公开调用契约。",
+      "premerge": {
+        "mode": "100644",
+        "object": "4a9e59aa9fd2e3174cb8f4589e8dc0d90fe4d402"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "b9b91345d611d56c0b7fc2d4c886e003464b97f7"
+      }
+    },
+    {
+      "path": "pyproject.toml",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "上游4.6.3版本、SDK范围及test_*收集策略不等于当前S4；继续使用已审阅manifest依赖声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "6d68e1ba4fa231309cb9e0870103655d01fd92c9"
+      }
+    },
+    {
+      "path": "requirements.txt",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "上游4.6.3版本、SDK范围及test_*收集策略不等于当前S4；继续使用已审阅manifest依赖声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "039bcbb541d9e8413684ad86cee6bcaa32b3f885"
+      }
+    },
+    {
+      "path": "tests/conftest.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "b5ea024be094c5b9b1f1cc5f45b5b8e17e042fc7"
+      }
+    },
+    {
+      "path": "tests/smoke_test.py",
+      "upstream_status": "M",
+      "decision": "retain_audited_stage",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": {
+        "mode": "100644",
+        "object": "d9b26ce4f15232fb45c3983a6cb14bca023e090a"
+      },
+      "upstream": {
+        "mode": "100644",
+        "object": "4d905af64361070a0f06a3132dac5c4c3819f53b"
+      }
+    },
+    {
+      "path": "tests/test_adapter_compatibility.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "cce26dc68a0ad3f28884314c3adb6481724eb31b"
+      }
+    },
+    {
+      "path": "tests/test_command_model_selection.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "0fbf98e9a440df02ba0e74fc0b5017923ee64c83"
+      }
+    },
+    {
+      "path": "tests/test_novelai.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "dc093e2667bfc831f794ea01c8d385bcdde874e4"
+      }
+    },
+    {
+      "path": "tests/test_prompt_optimization.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "de6dde92da6c1f00f49102a164f15d0c18ab214b"
+      }
+    },
+    {
+      "path": "tests/test_quota_integration.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "19fca572f0cda1cc40c5a492ff977ab311988848"
+      }
+    },
+    {
+      "path": "tests/test_quota_store.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "6f8c8432bcda0f2b6ec3f68f45d25717b11a8e70"
+      }
+    },
+    {
+      "path": "tests/test_scene_and_tasks.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "75eca283ca631481137830d60d24b4becb6bc96e"
+      }
+    },
+    {
+      "path": "tests/test_sdk_upgrade.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "585f70c4d08b2e6d7dde776b778f3a0fce0d70b5"
+      }
+    },
+    {
+      "path": "tests/test_state_persistence.py",
+      "upstream_status": "A",
+      "decision": "exclude_upstream_addition",
+      "reason": "保留已验收S4测试；新上游测试强依赖本次未启用的NAI/quota/proactive/迁移或相反的重试行为，不作为本轮支持声明。",
+      "premerge": null,
+      "upstream": {
+        "mode": "100644",
+        "object": "b496212677630d4287119cad2a2eca70cc017a0e"
+      }
+    }
+  ]
+}
